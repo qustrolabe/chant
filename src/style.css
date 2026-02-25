@@ -1,0 +1,74 @@
+@import "tailwindcss";
+
+/* ── Warm Dark Theme (Gruvbox-inspired) ── */
+:root {
+  --bg-base: #1a1714;
+  --bg-surface: #211e19;
+  --bg-overlay: #292520;
+  --bg-input: #151210;
+
+  --fg-primary: #e2d9c8;
+  --fg-secondary: #a89a85;
+  --fg-muted: #6b5f50;
+
+  --border: rgba(200, 170, 120, 0.08);
+  --border-strong: rgba(200, 170, 120, 0.15);
+
+  --accent: #d99f50;
+  --accent-hover: #e5b36a;
+  --accent-muted: rgba(217, 159, 80, 0.15);
+
+  --danger: #cc6666;
+  --success: #a9b665;
+
+  --scrollbar-thumb: #4a4035;
+  --scrollbar-thumb-hover: #6b5f50;
+}
+
+@theme {
+  --color-bg-base: var(--bg-base);
+  --color-bg-surface: var(--bg-surface);
+  --color-bg-overlay: var(--bg-overlay);
+  --color-bg-input: var(--bg-input);
+
+  --color-fg-primary: var(--fg-primary);
+  --color-fg-secondary: var(--fg-secondary);
+  --color-fg-muted: var(--fg-muted);
+
+  --color-border: var(--border);
+  --color-border-strong: var(--border-strong);
+
+  --color-accent: var(--accent);
+  --color-accent-hover: var(--accent-hover);
+  --color-accent-muted: var(--accent-muted);
+
+  --color-danger: var(--danger);
+  --color-success: var(--success);
+}
+
+/* ── Base Reset ── */
+html, body {
+  margin: 0;
+  padding: 0;
+  overflow: hidden;
+  background: var(--bg-base);
+  color: var(--fg-primary);
+  font-family: 'Inter', 'Segoe UI', system-ui, -apple-system, sans-serif;
+  -webkit-font-smoothing: antialiased;
+}
+
+/* ── Scrollbar ── */
+::-webkit-scrollbar {
+  width: 6px;
+  height: 6px;
+}
+::-webkit-scrollbar-track {
+  background: transparent;
+}
+::-webkit-scrollbar-thumb {
+  background: var(--scrollbar-thumb);
+  border-radius: 3px;
+}
+::-webkit-scrollbar-thumb:hover {
+  background: var(--scrollbar-thumb-hover);
+}
