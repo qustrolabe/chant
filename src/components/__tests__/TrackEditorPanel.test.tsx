@@ -24,6 +24,18 @@ const baseTrack: TrackRow = {
   lyrics: "Some lyrics here",
   createdAt: "2024-01-01T00:00:00Z",
   updatedAt: "2024-01-01T00:00:00Z",
+  // Extended fields
+  genre: null,
+  albumArtist: null,
+  composer: null,
+  bpm: null,
+  comment: null,
+  commentLang: null,
+  year: null,
+  lyricsLang: null,
+  trackTotal: null,
+  discTotal: null,
+  // Joined
   artistName: "Test Artist",
   albumTitle: "Test Album",
   albumCoverPath: null,
@@ -45,12 +57,14 @@ function setupMocks(track: TrackRow = baseTrack) {
     list_artists: artists,
     list_albums: albums,
     update_track: track,
+    get_track_extra_tags: [],
+    set_track_extra_tags: null,
+    batch_update_tracks: null,
   });
 }
 
 /** Wait for the editor to finish loading (Save button becomes present). */
 async function waitForLoaded() {
-  // The Save/Discard buttons only render after loading is done (early return when loading)
   await screen.findByRole("button", { name: /^save$/i });
 }
 
@@ -63,36 +77,34 @@ describe("TrackEditorPanel", () => {
 
   it("shows loading state initially", async () => {
     setupMocks();
-    render(<TrackEditorPanel trackId={1} />);
-    // The loading div should be present before the promise resolves
+    render(<TrackEditorPanel trackIds={[1]} />);
     expect(screen.getByText("Loading…")).toBeInTheDocument();
   });
 
   it("renders track title after loading", async () => {
     setupMocks();
-    render(<TrackEditorPanel trackId={1} />);
+    render(<TrackEditorPanel trackIds={[1]} />);
     await waitForLoaded();
-    // Title appears in header and in the "Original" column
     expect(screen.getAllByText("My Song").length).toBeGreaterThan(0);
   });
 
   it("shows artist and album in header subtitle", async () => {
     setupMocks();
-    render(<TrackEditorPanel trackId={1} />);
+    render(<TrackEditorPanel trackIds={[1]} />);
     await waitForLoaded();
     expect(screen.getByText("Test Artist · Test Album")).toBeInTheDocument();
   });
 
   it("Save button is disabled when nothing is changed", async () => {
     setupMocks();
-    render(<TrackEditorPanel trackId={1} />);
+    render(<TrackEditorPanel trackIds={[1]} />);
     await waitForLoaded();
     expect(screen.getByRole("button", { name: /^save$/i })).toBeDisabled();
   });
 
   it("Discard button is disabled when nothing is changed", async () => {
     setupMocks();
-    render(<TrackEditorPanel trackId={1} />);
+    render(<TrackEditorPanel trackIds={[1]} />);
     await waitForLoaded();
     expect(screen.getByRole("button", { name: /discard/i })).toBeDisabled();
   });
@@ -100,10 +112,9 @@ describe("TrackEditorPanel", () => {
   it("Save button enables when title is edited", async () => {
     setupMocks();
     const user = userEvent.setup();
-    render(<TrackEditorPanel trackId={1} />);
+    render(<TrackEditorPanel trackIds={[1]} />);
     await waitForLoaded();
 
-    // The title input in the "New" column has value "My Song"
     const titleInputs = screen.getAllByDisplayValue("My Song");
     await user.clear(titleInputs[0]);
     await user.type(titleInputs[0], "New Title");
@@ -114,7 +125,7 @@ describe("TrackEditorPanel", () => {
   it("Discard button enables when title is edited", async () => {
     setupMocks();
     const user = userEvent.setup();
-    render(<TrackEditorPanel trackId={1} />);
+    render(<TrackEditorPanel trackIds={[1]} />);
     await waitForLoaded();
 
     const titleInputs = screen.getAllByDisplayValue("My Song");
@@ -129,12 +140,13 @@ describe("TrackEditorPanel", () => {
     const mockedInvoke = vi.mocked(invoke);
     setupMocks();
     const user = userEvent.setup();
-    render(<TrackEditorPanel trackId={1} />);
+    render(<TrackEditorPanel trackIds={[1]} />);
     await waitForLoaded();
 
-    const titleInputs = screen.getAllByDisplayValue("My Song");
-    await user.clear(titleInputs[0]);
-    await user.type(titleInputs[0], "Changed Title");
+    // Use fireEvent.change to avoid stale-ref issues from inner-component FieldRow remounting
+    fireEvent.change(screen.getAllByDisplayValue("My Song")[0], {
+      target: { value: "Changed Title" },
+    });
 
     await user.click(screen.getByRole("button", { name: /^save$/i }));
 
@@ -151,7 +163,7 @@ describe("TrackEditorPanel", () => {
 
   it("shows read-only fields: Duration, Format, Bitrate, Path", async () => {
     setupMocks();
-    render(<TrackEditorPanel trackId={1} />);
+    render(<TrackEditorPanel trackIds={[1]} />);
     await waitForLoaded();
     expect(screen.getByText("Duration")).toBeInTheDocument();
     expect(screen.getByText("3:33")).toBeInTheDocument();
@@ -167,15 +179,16 @@ describe("TrackEditorPanel", () => {
       get_track: () => { throw new Error("not found"); },
       list_artists: artists,
       list_albums: albums,
+      get_track_extra_tags: [],
     });
-    render(<TrackEditorPanel trackId={999} />);
+    render(<TrackEditorPanel trackIds={[999]} />);
     await waitFor(() => expect(screen.getByText("Track not found.")).toBeInTheDocument());
   });
 
   it("calls onBack when back button is clicked", async () => {
     setupMocks();
     const onBack = vi.fn();
-    render(<TrackEditorPanel trackId={1} onBack={onBack} />);
+    render(<TrackEditorPanel trackIds={[1]} onBack={onBack} />);
     await waitForLoaded();
     fireEvent.click(screen.getByRole("button", { name: "Back" }));
     expect(onBack).toHaveBeenCalledOnce();
@@ -183,15 +196,14 @@ describe("TrackEditorPanel", () => {
 
   it("artist names are shown as chips", async () => {
     setupMocks();
-    render(<TrackEditorPanel trackId={1} />);
+    render(<TrackEditorPanel trackIds={[1]} />);
     await waitForLoaded();
-    // "Test Artist" appears in the Original column and as a chip in the New column
     expect(screen.getAllByText("Test Artist").length).toBeGreaterThan(0);
   });
 
   it("multi-artist names are split and shown as separate chips", async () => {
     setupMocks({ ...baseTrack, artistName: "Alice / Bob" });
-    render(<TrackEditorPanel trackId={1} />);
+    render(<TrackEditorPanel trackIds={[1]} />);
     await waitForLoaded();
     expect(screen.getByText("Alice")).toBeInTheDocument();
     expect(screen.getByText("Bob")).toBeInTheDocument();
@@ -199,7 +211,7 @@ describe("TrackEditorPanel", () => {
 
   it("album field shows current album value", async () => {
     setupMocks();
-    render(<TrackEditorPanel trackId={1} />);
+    render(<TrackEditorPanel trackIds={[1]} />);
     await waitForLoaded();
     expect(screen.getByDisplayValue("Test Album")).toBeInTheDocument();
   });
@@ -207,7 +219,7 @@ describe("TrackEditorPanel", () => {
   it("dirty state clears after discarding changes", async () => {
     setupMocks();
     const user = userEvent.setup();
-    render(<TrackEditorPanel trackId={1} />);
+    render(<TrackEditorPanel trackIds={[1]} />);
     await waitForLoaded();
 
     const titleInputs = screen.getAllByDisplayValue("My Song");
@@ -219,6 +231,214 @@ describe("TrackEditorPanel", () => {
 
     await user.click(screen.getByRole("button", { name: /discard/i }));
     expect(saveBtn).toBeDisabled();
+  });
+
+  // ── Multi-select divergence ──────────────────────────────────────────────
+
+  describe("multi-select divergence", () => {
+    it("uniform field across 2 tracks shows common value without yellow", async () => {
+      const track1 = { ...baseTrack, id: 1, title: "Same Title", artistName: "Artist A" };
+      const track2 = { ...baseTrack, id: 2, title: "Same Title", artistName: "Artist A" };
+      mockInvoke({
+        get_track: (args: { trackId: number }) => args.trackId === 1 ? track1 : track2,
+        list_artists: artists,
+        list_albums: albums,
+        get_track_extra_tags: [],
+        batch_update_tracks: null,
+      });
+      render(<TrackEditorPanel trackIds={[1, 2]} />);
+      await waitForLoaded();
+      // Input should have the common value
+      expect(screen.getByDisplayValue("Same Title")).toBeInTheDocument();
+    });
+
+    it("divergent title across 2 tracks shows placeholder '(varies)'", async () => {
+      const track1 = { ...baseTrack, id: 1, title: "Title A" };
+      const track2 = { ...baseTrack, id: 2, title: "Title B" };
+      mockInvoke({
+        get_track: (args: { trackId: number }) => args.trackId === 1 ? track1 : track2,
+        list_artists: artists,
+        list_albums: albums,
+        get_track_extra_tags: [],
+        batch_update_tracks: null,
+      });
+      render(<TrackEditorPanel trackIds={[1, 2]} />);
+      await waitForLoaded();
+      expect(screen.getByPlaceholderText("(varies)")).toBeInTheDocument();
+    });
+
+    it("editing a divergent field marks it as edited", async () => {
+      const track1 = { ...baseTrack, id: 1, title: "Title A" };
+      const track2 = { ...baseTrack, id: 2, title: "Title B" };
+      mockInvoke({
+        get_track: (args: { trackId: number }) => args.trackId === 1 ? track1 : track2,
+        list_artists: artists,
+        list_albums: albums,
+        get_track_extra_tags: [],
+        batch_update_tracks: null,
+      });
+      const user = userEvent.setup();
+      render(<TrackEditorPanel trackIds={[1, 2]} />);
+      await waitForLoaded();
+
+      const titleInput = screen.getByPlaceholderText("(varies)");
+      await user.type(titleInput, "New Title");
+
+      expect(screen.getByRole("button", { name: /^save$/i })).toBeEnabled();
+    });
+
+    it("save with 2 tracks calls batchUpdateTracks not updateTrack", async () => {
+      const { invoke } = await import("@tauri-apps/api/core");
+      const mockedInvoke = vi.mocked(invoke);
+
+      const track1 = { ...baseTrack, id: 1, title: "Title A" };
+      const track2 = { ...baseTrack, id: 2, title: "Title B" };
+      mockInvoke({
+        get_track: (args: { trackId: number }) => args.trackId === 1 ? track1 : track2,
+        list_artists: artists,
+        list_albums: albums,
+        get_track_extra_tags: [],
+        batch_update_tracks: null,
+      });
+      const user = userEvent.setup();
+      render(<TrackEditorPanel trackIds={[1, 2]} />);
+      await waitForLoaded();
+
+      const titleInput = screen.getByPlaceholderText("(varies)");
+      await user.type(titleInput, "New Title");
+      await user.click(screen.getByRole("button", { name: /^save$/i }));
+
+      await waitFor(() =>
+        expect(mockedInvoke).toHaveBeenCalledWith(
+          "batch_update_tracks",
+          expect.objectContaining({ trackIds: [1, 2] }),
+        ),
+      );
+      expect(mockedInvoke).not.toHaveBeenCalledWith("update_track", expect.anything());
+    });
+
+    it("save with 2 tracks only sends edited fields", async () => {
+      const { invoke } = await import("@tauri-apps/api/core");
+      const mockedInvoke = vi.mocked(invoke);
+
+      const track1 = { ...baseTrack, id: 1, title: "Title A", genre: "Jazz" };
+      const track2 = { ...baseTrack, id: 2, title: "Title B", genre: "Jazz" };
+      mockInvoke({
+        get_track: (args: { trackId: number }) => args.trackId === 1 ? track1 : track2,
+        list_artists: artists,
+        list_albums: albums,
+        get_track_extra_tags: [],
+        batch_update_tracks: null,
+      });
+      const user = userEvent.setup();
+      render(<TrackEditorPanel trackIds={[1, 2]} />);
+      await waitForLoaded();
+
+      // Only edit title — use fireEvent to avoid stale-ref from FieldRow remounting
+      fireEvent.change(screen.getByPlaceholderText("(varies)"), {
+        target: { value: "New Title" },
+      });
+      await user.click(screen.getByRole("button", { name: /^save$/i }));
+
+      await waitFor(() =>
+        expect(mockedInvoke).toHaveBeenCalledWith(
+          "batch_update_tracks",
+          expect.objectContaining({
+            input: expect.objectContaining({ title: "New Title" }),
+          }),
+        ),
+      );
+      // composer should not be in input (not edited)
+      const call = mockedInvoke.mock.calls.find((c) => c[0] === "batch_update_tracks");
+      expect(call?.[1]).not.toHaveProperty("input.composer");
+    });
+  });
+
+  // ── Validation ────────────────────────────────────────────────────────────
+
+  describe("validation", () => {
+    it("invalid BPM shows red ring and disables Save", async () => {
+      setupMocks();
+      render(<TrackEditorPanel trackIds={[1]} />);
+      await waitForLoaded();
+
+      const bpmRow = screen.getByText("BPM").closest("tr")!;
+      const input = bpmRow.querySelector("input")!;
+      fireEvent.change(input, { target: { value: "abc" } });
+
+      await waitFor(() =>
+        expect(screen.getByRole("button", { name: /^save$/i })).toBeDisabled(),
+      );
+      expect(screen.getByText("Must be a non-negative integer")).toBeInTheDocument();
+    });
+
+    it("valid BPM clears error and enables Save after title edit", async () => {
+      setupMocks();
+      render(<TrackEditorPanel trackIds={[1]} />);
+      await waitForLoaded();
+
+      const bpmInput = () => screen.getByText("BPM").closest("tr")!.querySelector("input")!;
+
+      // Type invalid value — re-query after each change since FieldRow remounts on state change
+      fireEvent.change(bpmInput(), { target: { value: "abc" } });
+      await waitFor(() =>
+        expect(screen.getByText("Must be a non-negative integer")).toBeInTheDocument(),
+      );
+
+      // Fix to valid value
+      fireEvent.change(bpmInput(), { target: { value: "128" } });
+
+      await waitFor(() =>
+        expect(screen.queryByText("Must be a non-negative integer")).not.toBeInTheDocument(),
+      );
+      // Save enabled because BPM is now edited with a valid value
+      expect(screen.getByRole("button", { name: /^save$/i })).toBeEnabled();
+    });
+  });
+
+  // ── Extra Tags ─────────────────────────────────────────────────────────────
+
+  describe("extra tags", () => {
+    it("renders existing extra tags", async () => {
+      mockInvoke({
+        get_track: baseTrack,
+        list_artists: artists,
+        list_albums: albums,
+        update_track: baseTrack,
+        get_track_extra_tags: [
+          { frameId: "TKEY", value: "Am" },
+          { frameId: "TCOP", value: "2024 Label" },
+        ],
+        set_track_extra_tags: null,
+        batch_update_tracks: null,
+      });
+      render(<TrackEditorPanel trackIds={[1]} />);
+      await waitForLoaded();
+      expect(screen.getByDisplayValue("Am")).toBeInTheDocument();
+      expect(screen.getByDisplayValue("2024 Label")).toBeInTheDocument();
+    });
+
+    it("shows Add field button in single-track mode", async () => {
+      setupMocks();
+      render(<TrackEditorPanel trackIds={[1]} />);
+      await waitForLoaded();
+      expect(screen.getByText("Add field")).toBeInTheDocument();
+    });
+
+    it("does not show Add field button in multi-track mode", async () => {
+      const track1 = { ...baseTrack, id: 1 };
+      const track2 = { ...baseTrack, id: 2 };
+      mockInvoke({
+        get_track: (args: { trackId: number }) => args.trackId === 1 ? track1 : track2,
+        list_artists: artists,
+        list_albums: albums,
+        get_track_extra_tags: [],
+        batch_update_tracks: null,
+      });
+      render(<TrackEditorPanel trackIds={[1, 2]} />);
+      await waitForLoaded();
+      expect(screen.queryByText("Add field")).not.toBeInTheDocument();
+    });
   });
 });
 

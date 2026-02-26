@@ -54,6 +54,9 @@ pub fn run() {
         commands::list_tracks,
         commands::get_track,
         commands::update_track,
+        commands::batch_update_tracks,
+        commands::get_track_extra_tags,
+        commands::set_track_extra_tags,
         // Artists
         commands::list_artists,
         commands::list_artist_rows,

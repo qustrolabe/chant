@@ -62,6 +62,17 @@ pub struct Track {
     pub lyrics: Option<String>,
     pub created_at: String,
     pub updated_at: String,
+    // Extended fields (added via migration)
+    pub genre: Option<String>,
+    pub album_artist: Option<String>,
+    pub composer: Option<String>,
+    pub bpm: Option<i32>,
+    pub comment: Option<String>,
+    pub comment_lang: Option<String>,
+    pub year: Option<i32>,
+    pub lyrics_lang: Option<String>,
+    pub track_total: Option<i32>,
+    pub disc_total: Option<i32>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, Type)]
@@ -85,7 +96,7 @@ pub struct Setting {
 
 // ── Track Update ──
 
-#[derive(Debug, Clone, Serialize, Deserialize, Type)]
+#[derive(Debug, Clone, Serialize, Deserialize, Type, Default)]
 #[serde(rename_all = "camelCase")]
 pub struct TrackUpdateInput {
     pub title: Option<String>,
@@ -96,6 +107,17 @@ pub struct TrackUpdateInput {
     pub artist_name: Option<String>,
     /// Set to Some("") to clear, Some("Title") to find-or-create, None to keep existing
     pub album_title: Option<String>,
+    // Extended fields — None = keep existing, Some(x) = set (Some("") = NULL for strings)
+    pub genre: Option<String>,
+    pub album_artist: Option<String>,
+    pub composer: Option<String>,
+    pub bpm: Option<i32>,
+    pub comment: Option<String>,
+    pub comment_lang: Option<String>,
+    pub year: Option<i32>,
+    pub lyrics_lang: Option<String>,
+    pub track_total: Option<i32>,
+    pub disc_total: Option<i32>,
 }
 
 // ── Track Row (joined query result) ──
@@ -119,9 +141,30 @@ pub struct TrackRow {
     pub lyrics: Option<String>,
     pub created_at: String,
     pub updated_at: String,
+    // Extended fields
+    pub genre: Option<String>,
+    pub album_artist: Option<String>,
+    pub composer: Option<String>,
+    pub bpm: Option<i32>,
+    pub comment: Option<String>,
+    pub comment_lang: Option<String>,
+    pub year: Option<i32>,
+    pub lyrics_lang: Option<String>,
+    pub track_total: Option<i32>,
+    pub disc_total: Option<i32>,
+    // Joined columns
     pub artist_name: Option<String>,
     pub album_title: Option<String>,
     pub album_cover_path: Option<String>,
+}
+
+// ── Extra Tag ──
+
+#[derive(Debug, Clone, Serialize, Deserialize, Type, FromRow)]
+#[serde(rename_all = "camelCase")]
+pub struct ExtraTag {
+    pub frame_id: String,
+    pub value: String,
 }
 
 // ── Aggregate Row Types (for table views) ──

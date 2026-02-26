@@ -67,7 +67,17 @@ CREATE TABLE IF NOT EXISTS tracks (
     sample_rate_hz  INTEGER,
     lyrics          TEXT,
     created_at      TEXT NOT NULL,
-    updated_at      TEXT NOT NULL
+    updated_at      TEXT NOT NULL,
+    genre           TEXT,
+    album_artist    TEXT,
+    composer        TEXT,
+    bpm             INTEGER,
+    comment         TEXT,
+    comment_lang    TEXT,
+    year            INTEGER,
+    lyrics_lang     TEXT,
+    track_total     INTEGER,
+    disc_total      INTEGER
 )
 "#;
 
@@ -95,3 +105,42 @@ CREATE TABLE IF NOT EXISTS settings (
     value  TEXT NOT NULL
 )
 "#;
+
+// ── Track column migrations ──
+// For existing databases that were created before these columns existed.
+// Execute each separately; ignore "already has a column named" errors (idempotent).
+
+pub const MIGRATE_TRACKS_ADD_GENRE: &str =
+    "ALTER TABLE tracks ADD COLUMN genre TEXT";
+pub const MIGRATE_TRACKS_ADD_ALBUM_ARTIST: &str =
+    "ALTER TABLE tracks ADD COLUMN album_artist TEXT";
+pub const MIGRATE_TRACKS_ADD_COMPOSER: &str =
+    "ALTER TABLE tracks ADD COLUMN composer TEXT";
+pub const MIGRATE_TRACKS_ADD_BPM: &str =
+    "ALTER TABLE tracks ADD COLUMN bpm INTEGER";
+pub const MIGRATE_TRACKS_ADD_COMMENT: &str =
+    "ALTER TABLE tracks ADD COLUMN comment TEXT";
+pub const MIGRATE_TRACKS_ADD_COMMENT_LANG: &str =
+    "ALTER TABLE tracks ADD COLUMN comment_lang TEXT";
+pub const MIGRATE_TRACKS_ADD_YEAR: &str =
+    "ALTER TABLE tracks ADD COLUMN year INTEGER";
+pub const MIGRATE_TRACKS_ADD_LYRICS_LANG: &str =
+    "ALTER TABLE tracks ADD COLUMN lyrics_lang TEXT";
+pub const MIGRATE_TRACKS_ADD_TRACK_TOTAL: &str =
+    "ALTER TABLE tracks ADD COLUMN track_total INTEGER";
+pub const MIGRATE_TRACKS_ADD_DISC_TOTAL: &str =
+    "ALTER TABLE tracks ADD COLUMN disc_total INTEGER";
+
+// ── Extra tags table ──
+
+pub const CREATE_TRACK_EXTRA_TAGS_TABLE: &str = r#"
+CREATE TABLE IF NOT EXISTS track_extra_tags (
+    id        INTEGER PRIMARY KEY AUTOINCREMENT,
+    track_id  INTEGER NOT NULL REFERENCES tracks(id) ON DELETE CASCADE,
+    frame_id  TEXT NOT NULL,
+    value     TEXT NOT NULL,
+    UNIQUE(track_id, frame_id)
+)"#;
+
+pub const CREATE_TRACK_EXTRA_TAGS_INDEX: &str =
+    "CREATE INDEX IF NOT EXISTS idx_track_extra_tags_track_id ON track_extra_tags(track_id)";

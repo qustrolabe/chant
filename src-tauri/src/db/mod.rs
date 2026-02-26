@@ -63,6 +63,31 @@ pub async fn init_db(app_handle: &tauri::AppHandle) -> Result<DbPool, sqlx::Erro
     // Settings
     sqlx::query(CREATE_SETTINGS_TABLE).execute(&pool).await?;
 
+    // Schema migrations — add new columns to existing databases.
+    // New databases already include them in CREATE TABLE, so we ignore
+    // "already has a column named" errors (idempotent).
+    for stmt in [
+        MIGRATE_TRACKS_ADD_GENRE,
+        MIGRATE_TRACKS_ADD_ALBUM_ARTIST,
+        MIGRATE_TRACKS_ADD_COMPOSER,
+        MIGRATE_TRACKS_ADD_BPM,
+        MIGRATE_TRACKS_ADD_COMMENT,
+        MIGRATE_TRACKS_ADD_COMMENT_LANG,
+        MIGRATE_TRACKS_ADD_YEAR,
+        MIGRATE_TRACKS_ADD_LYRICS_LANG,
+        MIGRATE_TRACKS_ADD_TRACK_TOTAL,
+        MIGRATE_TRACKS_ADD_DISC_TOTAL,
+    ] {
+        if let Err(e) = sqlx::query(stmt).execute(&pool).await {
+            let msg = e.to_string();
+            if !msg.contains("already has a column named") {
+                return Err(e);
+            }
+        }
+    }
+    sqlx::query(CREATE_TRACK_EXTRA_TAGS_TABLE).execute(&pool).await?;
+    sqlx::query(CREATE_TRACK_EXTRA_TAGS_INDEX).execute(&pool).await?;
+
     info!("Chant database initialized successfully");
     Ok(pool)
 }

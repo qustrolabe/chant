@@ -35,16 +35,6 @@ function formatDuration(secs: number | null) {
   return `${m}:${s}`;
 }
 
-function MultiSelectPanel({ count }: { count: number }) {
-  return (
-    <div className="flex flex-col h-full overflow-hidden text-xs">
-      <div className="px-3 py-2 border-b border-border bg-bg-surface flex-shrink-0">
-        <div className="font-semibold text-fg-primary">{count} tracks selected</div>
-        <div className="text-fg-muted mt-0.5">Select a single track to edit its tags</div>
-      </div>
-    </div>
-  );
-}
 
 export function Table() {
   const [tracks, setTracks] = useState<TrackRow[]>([]);
@@ -398,11 +388,8 @@ export function Table() {
               Select a track to edit its tags
             </div>
           )}
-          {selectedIds.size === 1 && (
-            <TrackEditorPanel trackId={[...selectedIds][0]} />
-          )}
-          {selectedIds.size > 1 && (
-            <MultiSelectPanel count={selectedIds.size} />
+          {selectedIds.size >= 1 && (
+            <TrackEditorPanel trackIds={[...selectedIds]} />
           )}
         </div>
       </div>

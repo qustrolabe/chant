@@ -1,7 +1,7 @@
 use crate::db::DbPool;
 use crate::models::{
     Album, AlbumRow, AppError, Artist, ArtistRow, Collection, CollectionInput, CoverArt,
-    LibraryStats, Setting, Track, TrackRow, TrackUpdateInput,
+    ExtraTag, LibraryStats, Setting, Track, TrackRow, TrackUpdateInput,
 };
 use chrono::Utc;
 use lofty::prelude::*;
@@ -402,6 +402,25 @@ pub async fn update_track_inner(
     let disc_number = input.disc_number.or(existing.disc_number);
     let lyrics = input.lyrics.or(existing.lyrics);
 
+    // Extended fields — None = keep existing, Some("") = set NULL
+    fn opt_str(input: Option<String>, existing: Option<String>) -> Option<String> {
+        match input {
+            None => existing,
+            Some(s) if s.is_empty() => None,
+            Some(s) => Some(s),
+        }
+    }
+    let genre = opt_str(input.genre, existing.genre);
+    let album_artist = opt_str(input.album_artist, existing.album_artist);
+    let composer = opt_str(input.composer, existing.composer);
+    let comment = opt_str(input.comment, existing.comment);
+    let comment_lang = opt_str(input.comment_lang, existing.comment_lang);
+    let lyrics_lang = opt_str(input.lyrics_lang, existing.lyrics_lang);
+    let bpm = input.bpm.or(existing.bpm);
+    let year = input.year.or(existing.year);
+    let track_total = input.track_total.or(existing.track_total);
+    let disc_total = input.disc_total.or(existing.disc_total);
+
     // Resolve new artist_id: None = keep existing, Some("") = clear, Some(name) = find-or-create
     let new_artist_id: Option<i64> = match input.artist_name.as_deref() {
         None => existing.artist_id,
@@ -418,7 +437,11 @@ pub async fn update_track_inner(
 
     sqlx::query(
         "UPDATE tracks SET title = ?, track_number = ?, disc_number = ?, lyrics = ?, \
-         artist_id = ?, album_id = ?, updated_at = ? WHERE id = ?",
+         artist_id = ?, album_id = ?, \
+         genre = ?, album_artist = ?, composer = ?, bpm = ?, \
+         comment = ?, comment_lang = ?, year = ?, lyrics_lang = ?, \
+         track_total = ?, disc_total = ?, \
+         updated_at = ? WHERE id = ?",
     )
     .bind(&title)
     .bind(track_number)
@@ -426,6 +449,16 @@ pub async fn update_track_inner(
     .bind(&lyrics)
     .bind(new_artist_id)
     .bind(new_album_id)
+    .bind(&genre)
+    .bind(&album_artist)
+    .bind(&composer)
+    .bind(bpm)
+    .bind(&comment)
+    .bind(&comment_lang)
+    .bind(year)
+    .bind(&lyrics_lang)
+    .bind(track_total)
+    .bind(disc_total)
     .bind(&now)
     .bind(track_id)
     .execute(db)
@@ -442,6 +475,192 @@ pub async fn update_track(
     input: TrackUpdateInput,
 ) -> Result<TrackRow, AppError> {
     update_track_inner(db.inner(), track_id, input).await
+}
+
+// ── Batch Update ──
+
+pub async fn batch_update_tracks_inner(
+    db: &DbPool,
+    track_ids: Vec<i64>,
+    input: TrackUpdateInput,
+) -> Result<(), AppError> {
+    let mut tx = db.begin().await?;
+    for &id in &track_ids {
+        // Fetch existing track within transaction
+        let existing = sqlx::query_as::<_, Track>("SELECT * FROM tracks WHERE id = ?")
+            .bind(id)
+            .fetch_optional(&mut *tx)
+            .await?
+            .ok_or_else(|| AppError::NotFound(format!("Track {} not found", id)))?;
+
+        let now = Utc::now().to_rfc3339();
+        let title = input.title.clone().unwrap_or(existing.title);
+        let track_number = input.track_number.or(existing.track_number);
+        let disc_number = input.disc_number.or(existing.disc_number);
+        let lyrics = input.lyrics.clone().or(existing.lyrics);
+
+        fn opt_str_batch(input: Option<String>, existing: Option<String>) -> Option<String> {
+            match input {
+                None => existing,
+                Some(s) if s.is_empty() => None,
+                Some(s) => Some(s),
+            }
+        }
+        let genre = opt_str_batch(input.genre.clone(), existing.genre);
+        let album_artist = opt_str_batch(input.album_artist.clone(), existing.album_artist);
+        let composer = opt_str_batch(input.composer.clone(), existing.composer);
+        let comment = opt_str_batch(input.comment.clone(), existing.comment);
+        let comment_lang = opt_str_batch(input.comment_lang.clone(), existing.comment_lang);
+        let lyrics_lang = opt_str_batch(input.lyrics_lang.clone(), existing.lyrics_lang);
+        let bpm = input.bpm.or(existing.bpm);
+        let year = input.year.or(existing.year);
+        let track_total = input.track_total.or(existing.track_total);
+        let disc_total = input.disc_total.or(existing.disc_total);
+
+        // Resolve artist
+        let new_artist_id: Option<i64> = match input.artist_name.as_deref() {
+            None => existing.artist_id,
+            Some("") => None,
+            Some(name) => {
+                let row: Option<(i64,)> = sqlx::query_as("SELECT id FROM artists WHERE name = ?")
+                    .bind(name)
+                    .fetch_optional(&mut *tx)
+                    .await?;
+                if let Some((aid,)) = row {
+                    Some(aid)
+                } else {
+                    let res = sqlx::query("INSERT INTO artists (name, created_at) VALUES (?, ?)")
+                        .bind(name)
+                        .bind(&now)
+                        .execute(&mut *tx)
+                        .await?;
+                    Some(res.last_insert_rowid())
+                }
+            }
+        };
+
+        // Resolve album
+        let new_album_id: Option<i64> = match input.album_title.as_deref() {
+            None => existing.album_id,
+            Some("") => None,
+            Some(atitle) => {
+                let row: Option<(i64,)> = if let Some(aid) = new_artist_id {
+                    sqlx::query_as("SELECT id FROM albums WHERE title = ? AND artist_id = ?")
+                        .bind(atitle).bind(aid).fetch_optional(&mut *tx).await?
+                } else {
+                    sqlx::query_as("SELECT id FROM albums WHERE title = ? AND artist_id IS NULL")
+                        .bind(atitle).fetch_optional(&mut *tx).await?
+                };
+                if let Some((alid,)) = row {
+                    Some(alid)
+                } else {
+                    let res = sqlx::query("INSERT INTO albums (title, artist_id, created_at) VALUES (?, ?, ?)")
+                        .bind(atitle).bind(new_artist_id).bind(&now).execute(&mut *tx).await?;
+                    Some(res.last_insert_rowid())
+                }
+            }
+        };
+
+        sqlx::query(
+            "UPDATE tracks SET title = ?, track_number = ?, disc_number = ?, lyrics = ?, \
+             artist_id = ?, album_id = ?, \
+             genre = ?, album_artist = ?, composer = ?, bpm = ?, \
+             comment = ?, comment_lang = ?, year = ?, lyrics_lang = ?, \
+             track_total = ?, disc_total = ?, \
+             updated_at = ? WHERE id = ?",
+        )
+        .bind(&title)
+        .bind(track_number)
+        .bind(disc_number)
+        .bind(&lyrics)
+        .bind(new_artist_id)
+        .bind(new_album_id)
+        .bind(&genre)
+        .bind(&album_artist)
+        .bind(&composer)
+        .bind(bpm)
+        .bind(&comment)
+        .bind(&comment_lang)
+        .bind(year)
+        .bind(&lyrics_lang)
+        .bind(track_total)
+        .bind(disc_total)
+        .bind(&now)
+        .bind(id)
+        .execute(&mut *tx)
+        .await?;
+    }
+    tx.commit().await?;
+    Ok(())
+}
+
+#[tauri::command]
+#[specta::specta]
+pub async fn batch_update_tracks(
+    db: State<'_, DbPool>,
+    track_ids: Vec<i64>,
+    input: TrackUpdateInput,
+) -> Result<(), AppError> {
+    batch_update_tracks_inner(db.inner(), track_ids, input).await
+}
+
+// ── Extra Tag Commands ──
+
+pub async fn get_track_extra_tags_inner(
+    db: &DbPool,
+    track_id: i64,
+) -> Result<Vec<ExtraTag>, AppError> {
+    Ok(
+        sqlx::query_as::<_, ExtraTag>(
+            "SELECT frame_id, value FROM track_extra_tags WHERE track_id = ? ORDER BY frame_id",
+        )
+        .bind(track_id)
+        .fetch_all(db)
+        .await?,
+    )
+}
+
+#[tauri::command]
+#[specta::specta]
+pub async fn get_track_extra_tags(
+    db: State<'_, DbPool>,
+    track_id: i64,
+) -> Result<Vec<ExtraTag>, AppError> {
+    get_track_extra_tags_inner(db.inner(), track_id).await
+}
+
+pub async fn set_track_extra_tags_inner(
+    db: &DbPool,
+    track_id: i64,
+    tags: Vec<ExtraTag>,
+) -> Result<(), AppError> {
+    let mut tx = db.begin().await?;
+    sqlx::query("DELETE FROM track_extra_tags WHERE track_id = ?")
+        .bind(track_id)
+        .execute(&mut *tx)
+        .await?;
+    for tag in &tags {
+        sqlx::query(
+            "INSERT INTO track_extra_tags (track_id, frame_id, value) VALUES (?, ?, ?)",
+        )
+        .bind(track_id)
+        .bind(&tag.frame_id)
+        .bind(&tag.value)
+        .execute(&mut *tx)
+        .await?;
+    }
+    tx.commit().await?;
+    Ok(())
+}
+
+#[tauri::command]
+#[specta::specta]
+pub async fn set_track_extra_tags(
+    db: State<'_, DbPool>,
+    track_id: i64,
+    tags: Vec<ExtraTag>,
+) -> Result<(), AppError> {
+    set_track_extra_tags_inner(db.inner(), track_id, tags).await
 }
 
 // ── Artist Commands ──
@@ -638,7 +857,9 @@ async fn process_track(
     let now = Utc::now().to_rfc3339();
 
     // Read tags
-    let (tag_title, artist_name, album_title, year, track_num, disc_num, duration, cover_data) = match Probe::open(path) {
+    #[allow(clippy::type_complexity)]
+    let (tag_title, artist_name, album_title, year, track_num, disc_num, duration, cover_data,
+         genre, album_artist, composer, bpm, comment, lyrics_text) = match Probe::open(path) {
         Ok(probe) => {
             match probe.read() {
                 Ok(tagged_file) => {
@@ -658,6 +879,14 @@ async fn process_track(
                             (pic.data().to_vec(), ext.to_string())
                         });
 
+                        let genre = t.genre().map(|s| s.to_string());
+                        let album_artist = t.get_string(&ItemKey::AlbumArtist).map(|s| s.to_string());
+                        let composer = t.get_string(&ItemKey::Composer).map(|s| s.to_string());
+                        let bpm = t.get_string(&ItemKey::Bpm)
+                            .and_then(|s| s.parse::<i32>().ok());
+                        let comment = t.get_string(&ItemKey::Comment).map(|s| s.to_string());
+                        let lyrics_text = t.get_string(&ItemKey::Lyrics).map(|s| s.to_string());
+
                         (
                             t.title().map(|s| s.to_string()),
                             t.artist().map(|s| s.to_string()),
@@ -667,20 +896,29 @@ async fn process_track(
                             t.disk().map(|dn| dn as i32),
                             Some(duration),
                             picture_data,
+                            genre,
+                            album_artist,
+                            composer,
+                            bpm,
+                            comment,
+                            lyrics_text,
                         )
                     } else {
-                        (None, None, None, None, None, None, Some(duration), None)
+                        (None, None, None, None, None, None, Some(duration), None,
+                         None, None, None, None, None, None)
                     }
                 }
                 Err(e) => {
                     warn!("Failed to read tags for {:?}: {:?}", path, e);
-                    (None, None, None, None, None, None, None, None)
+                    (None, None, None, None, None, None, None, None,
+                     None, None, None, None, None, None)
                 }
             }
         }
         Err(e) => {
             warn!("Failed to probe file {:?}: {:?}", path, e);
-            (None, None, None, None, None, None, None, None)
+            (None, None, None, None, None, None, None, None,
+             None, None, None, None, None, None)
         }
     };
 
@@ -776,8 +1014,9 @@ async fn process_track(
             collection_id, album_id, artist_id, title,
             track_number, disc_number, duration_secs,
             file_path, file_size_bytes, file_format,
+            genre, album_artist, composer, bpm, comment, lyrics,
             created_at, updated_at
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         ON CONFLICT(file_path) DO UPDATE SET
             album_id = excluded.album_id,
             artist_id = excluded.artist_id,
@@ -786,6 +1025,12 @@ async fn process_track(
             disc_number = excluded.disc_number,
             duration_secs = excluded.duration_secs,
             file_size_bytes = excluded.file_size_bytes,
+            genre = excluded.genre,
+            album_artist = excluded.album_artist,
+            composer = excluded.composer,
+            bpm = excluded.bpm,
+            comment = excluded.comment,
+            lyrics = excluded.lyrics,
             updated_at = excluded.updated_at
         "#
     )
@@ -799,6 +1044,12 @@ async fn process_track(
     .bind(&path_str)
     .bind(file_size)
     .bind(path.extension().and_then(|s| s.to_str()))
+    .bind(&genre)
+    .bind(&album_artist)
+    .bind(&composer)
+    .bind(bpm)
+    .bind(&comment)
+    .bind(&lyrics_text)
     .bind(&now)
     .bind(&now)
     .execute(&mut *tx)
@@ -1100,10 +1351,7 @@ mod tests {
         let updated = update_track_inner(&db, track_id, TrackUpdateInput {
             title: Some("New Title".to_string()),
             track_number: Some(5),
-            disc_number: None,
-            lyrics: None,
-            artist_name: None,
-            album_title: None,
+            ..Default::default()
         }).await.unwrap();
 
         assert_eq!(updated.title, "New Title");
@@ -1136,12 +1384,8 @@ mod tests {
         let track_id = insert_bare_track(&db, col.id, "Song", "/music/song.mp3").await;
 
         let updated = update_track_inner(&db, track_id, TrackUpdateInput {
-            title: None,
-            track_number: None,
-            disc_number: None,
-            lyrics: None,
             artist_name: Some("New Artist".to_string()),
-            album_title: None,
+            ..Default::default()
         }).await.unwrap();
 
         assert_eq!(updated.artist_name, Some("New Artist".to_string()));
@@ -1163,9 +1407,8 @@ mod tests {
         let track_id = insert_bare_track(&db, col.id, "Song", "/music/song.mp3").await;
 
         update_track_inner(&db, track_id, TrackUpdateInput {
-            title: None, track_number: None, disc_number: None, lyrics: None,
             artist_name: Some("Existing Artist".to_string()),
-            album_title: None,
+            ..Default::default()
         }).await.unwrap();
 
         // should NOT have created a second artist row
@@ -1191,9 +1434,8 @@ mod tests {
         let (track_id,): (i64,) = sqlx::query_as("SELECT last_insert_rowid()").fetch_one(&db).await.unwrap();
 
         let updated = update_track_inner(&db, track_id, TrackUpdateInput {
-            title: None, track_number: None, disc_number: None, lyrics: None,
             artist_name: Some("".to_string()),
-            album_title: None,
+            ..Default::default()
         }).await.unwrap();
 
         assert_eq!(updated.artist_id, None);
@@ -1207,9 +1449,8 @@ mod tests {
         let track_id = insert_bare_track(&db, col.id, "Song", "/music/song.mp3").await;
 
         let updated = update_track_inner(&db, track_id, TrackUpdateInput {
-            title: None, track_number: None, disc_number: None, lyrics: None,
-            artist_name: None,
             album_title: Some("New Album".to_string()),
+            ..Default::default()
         }).await.unwrap();
 
         assert_eq!(updated.album_title, Some("New Album".to_string()));
@@ -1226,9 +1467,9 @@ mod tests {
         let track_id = insert_bare_track(&db, col.id, "Song", "/music/song.mp3").await;
 
         let updated = update_track_inner(&db, track_id, TrackUpdateInput {
-            title: None, track_number: None, disc_number: None, lyrics: None,
             artist_name: Some("Band".to_string()),
             album_title: Some("Debut".to_string()),
+            ..Default::default()
         }).await.unwrap();
 
         assert_eq!(updated.artist_name, Some("Band".to_string()));
@@ -1260,9 +1501,8 @@ mod tests {
         let (track_id,): (i64,) = sqlx::query_as("SELECT last_insert_rowid()").fetch_one(&db).await.unwrap();
 
         let updated = update_track_inner(&db, track_id, TrackUpdateInput {
-            title: None, track_number: None, disc_number: None, lyrics: None,
-            artist_name: None,
             album_title: Some("".to_string()),
+            ..Default::default()
         }).await.unwrap();
 
         assert_eq!(updated.album_id, None);
@@ -1761,5 +2001,160 @@ mod tests {
         assert!(albums.is_empty(), "albums should be empty after clear");
         assert!(collections.is_empty(), "collections should be empty after clear");
         assert!(tracks.is_empty(), "tracks should be empty after clear");
+    }
+
+    // ── New Field Tests ──
+
+    #[tokio::test]
+    async fn test_update_track_new_fields() {
+        let db = setup_test_db().await;
+        let col = add_collection_inner(&db, CollectionInput { path: abs_test_path(""), label: None }, true).await.unwrap();
+        let track_id = insert_bare_track(&db, col.id, "Song", "/music/new_fields.mp3").await;
+
+        let updated = update_track_inner(&db, track_id, TrackUpdateInput {
+            genre: Some("Jazz".to_string()),
+            bpm: Some(120),
+            year: Some(2023),
+            composer: Some("Bach".to_string()),
+            ..Default::default()
+        }).await.unwrap();
+
+        assert_eq!(updated.genre, Some("Jazz".to_string()));
+        assert_eq!(updated.bpm, Some(120));
+        assert_eq!(updated.year, Some(2023));
+        assert_eq!(updated.composer, Some("Bach".to_string()));
+    }
+
+    #[tokio::test]
+    async fn test_update_track_keeps_existing_new_fields() {
+        let db = setup_test_db().await;
+        let col = add_collection_inner(&db, CollectionInput { path: abs_test_path(""), label: None }, true).await.unwrap();
+        let track_id = insert_bare_track(&db, col.id, "Song", "/music/keep_fields.mp3").await;
+
+        // First set genre and bpm
+        update_track_inner(&db, track_id, TrackUpdateInput {
+            genre: Some("Rock".to_string()),
+            bpm: Some(140),
+            ..Default::default()
+        }).await.unwrap();
+
+        // Update only title — genre and bpm must be unchanged
+        let updated = update_track_inner(&db, track_id, TrackUpdateInput {
+            title: Some("New Title".to_string()),
+            ..Default::default()
+        }).await.unwrap();
+
+        assert_eq!(updated.title, "New Title");
+        assert_eq!(updated.genre, Some("Rock".to_string()));
+        assert_eq!(updated.bpm, Some(140));
+    }
+
+    #[tokio::test]
+    async fn test_batch_update_tracks_changes_all() {
+        let db = setup_test_db().await;
+        let col = add_collection_inner(&db, CollectionInput { path: abs_test_path(""), label: None }, true).await.unwrap();
+        let id1 = insert_bare_track(&db, col.id, "Track A", "/music/ba1.mp3").await;
+        let id2 = insert_bare_track(&db, col.id, "Track B", "/music/ba2.mp3").await;
+        let id3 = insert_bare_track(&db, col.id, "Track C", "/music/ba3.mp3").await;
+
+        batch_update_tracks_inner(&db, vec![id1, id2, id3], TrackUpdateInput {
+            title: Some("Batch Title".to_string()),
+            ..Default::default()
+        }).await.unwrap();
+
+        for id in [id1, id2, id3] {
+            let t = get_track_inner(&db, id).await.unwrap();
+            assert_eq!(t.title, "Batch Title", "track {} should have new title", id);
+        }
+    }
+
+    #[tokio::test]
+    async fn test_batch_update_tracks_is_atomic() {
+        let db = setup_test_db().await;
+        let col = add_collection_inner(&db, CollectionInput { path: abs_test_path(""), label: None }, true).await.unwrap();
+        let id1 = insert_bare_track(&db, col.id, "Original A", "/music/atom1.mp3").await;
+        let id2 = insert_bare_track(&db, col.id, "Original B", "/music/atom2.mp3").await;
+
+        // Include a non-existent id — should cause rollback
+        let result = batch_update_tracks_inner(
+            &db,
+            vec![id1, 99999, id2],
+            TrackUpdateInput {
+                title: Some("Should Rollback".to_string()),
+                ..Default::default()
+            },
+        ).await;
+
+        assert!(result.is_err(), "batch with invalid id should fail");
+
+        // Both valid tracks should be unchanged
+        let t1 = get_track_inner(&db, id1).await.unwrap();
+        let t2 = get_track_inner(&db, id2).await.unwrap();
+        assert_eq!(t1.title, "Original A");
+        assert_eq!(t2.title, "Original B");
+    }
+
+    #[tokio::test]
+    async fn test_set_and_get_extra_tags() {
+        let db = setup_test_db().await;
+        let col = add_collection_inner(&db, CollectionInput { path: abs_test_path(""), label: None }, true).await.unwrap();
+        let track_id = insert_bare_track(&db, col.id, "Song", "/music/extra1.mp3").await;
+
+        let tags = vec![
+            ExtraTag { frame_id: "TCOP".to_string(), value: "2024 Label".to_string() },
+            ExtraTag { frame_id: "TKEY".to_string(), value: "Am".to_string() },
+        ];
+        set_track_extra_tags_inner(&db, track_id, tags).await.unwrap();
+
+        let fetched = get_track_extra_tags_inner(&db, track_id).await.unwrap();
+        assert_eq!(fetched.len(), 2);
+        // ORDER BY frame_id: TCOP < TKEY
+        assert_eq!(fetched[0].frame_id, "TCOP");
+        assert_eq!(fetched[0].value, "2024 Label");
+        assert_eq!(fetched[1].frame_id, "TKEY");
+        assert_eq!(fetched[1].value, "Am");
+    }
+
+    #[tokio::test]
+    async fn test_set_extra_tags_replaces_all() {
+        let db = setup_test_db().await;
+        let col = add_collection_inner(&db, CollectionInput { path: abs_test_path(""), label: None }, true).await.unwrap();
+        let track_id = insert_bare_track(&db, col.id, "Song", "/music/extra2.mp3").await;
+
+        // Set TKEY first
+        set_track_extra_tags_inner(&db, track_id, vec![
+            ExtraTag { frame_id: "TKEY".to_string(), value: "C".to_string() },
+        ]).await.unwrap();
+
+        // Replace with TCOP only — TKEY must be gone
+        set_track_extra_tags_inner(&db, track_id, vec![
+            ExtraTag { frame_id: "TCOP".to_string(), value: "Label".to_string() },
+        ]).await.unwrap();
+
+        let fetched = get_track_extra_tags_inner(&db, track_id).await.unwrap();
+        assert_eq!(fetched.len(), 1);
+        assert_eq!(fetched[0].frame_id, "TCOP");
+    }
+
+    #[tokio::test]
+    async fn test_extra_tags_deleted_with_track() {
+        let db = setup_test_db().await;
+        let col = add_collection_inner(&db, CollectionInput { path: abs_test_path(""), label: None }, true).await.unwrap();
+        let track_id = insert_bare_track(&db, col.id, "Song", "/music/extra3.mp3").await;
+
+        set_track_extra_tags_inner(&db, track_id, vec![
+            ExtraTag { frame_id: "TKEY".to_string(), value: "G".to_string() },
+        ]).await.unwrap();
+
+        // Delete the track
+        sqlx::query("DELETE FROM tracks WHERE id = ?")
+            .bind(track_id)
+            .execute(&db)
+            .await
+            .unwrap();
+
+        // Extra tags should be cascaded away
+        let fetched = get_track_extra_tags_inner(&db, track_id).await.unwrap();
+        assert!(fetched.is_empty(), "extra tags should be deleted when track is deleted");
     }
 }

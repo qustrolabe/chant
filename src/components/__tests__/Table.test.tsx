@@ -23,10 +23,10 @@ vi.mock("@tauri-apps/plugin-opener", () => ({
   revealItemInDir: vi.fn(),
 }));
 
-// TrackEditorPanel stub — renders a simple div with the trackId so we can assert it
+// TrackEditorPanel stub — renders a simple div with the trackIds so we can assert it
 vi.mock("../TrackEditorPanel", () => ({
-  TrackEditorPanel: ({ trackId }: { trackId: number }) => (
-    <div data-testid="editor-panel">Editor for {trackId}</div>
+  TrackEditorPanel: ({ trackIds }: { trackIds: number[] }) => (
+    <div data-testid="editor-panel">Editor for {trackIds.join(",")}</div>
   ),
 }));
 
@@ -53,6 +53,16 @@ function makeTrack(overrides: Partial<TrackRow> = {}): TrackRow {
     artistName: "Artist",
     albumTitle: "Album",
     albumCoverPath: null,
+    genre: null,
+    albumArtist: null,
+    composer: null,
+    bpm: null,
+    comment: null,
+    commentLang: null,
+    year: null,
+    lyricsLang: null,
+    trackTotal: null,
+    discTotal: null,
     ...overrides,
   };
 }
@@ -120,8 +130,8 @@ describe("Table route", () => {
     const row2 = screen.getByText("Track Two").closest("tr")!;
     fireEvent.click(row1);
     fireEvent.click(row2, { ctrlKey: true });
-    // Two tracks selected → multi-select panel
-    expect(await screen.findByText("2 tracks selected")).toBeInTheDocument();
+    // Two tracks selected → editor receives both ids
+    expect(await screen.findByText("Editor for 1,2")).toBeInTheDocument();
   });
 
   it("ctrl+click on already-selected track deselects it", async () => {
@@ -138,8 +148,8 @@ describe("Table route", () => {
     const row3 = screen.getByText("Track Three").closest("tr")!;
     fireEvent.click(row1);
     fireEvent.click(row3, { shiftKey: true });
-    // Tracks 1, 2, 3 selected → multi-select panel
-    expect(await screen.findByText("3 tracks selected")).toBeInTheDocument();
+    // Tracks 1, 2, 3 selected → editor receives all three ids
+    expect(await screen.findByText("Editor for 1,2,3")).toBeInTheDocument();
   });
 
   it("clear-selection button appears when tracks are selected", async () => {

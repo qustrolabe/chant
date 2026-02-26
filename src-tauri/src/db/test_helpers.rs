@@ -25,6 +25,10 @@ pub async fn setup_test_db() -> DbPool {
     sqlx::query(CREATE_TRACKS_ARTIST_INDEX).execute(&pool).await.unwrap();
     sqlx::query(CREATE_TRACKS_FILE_PATH_INDEX).execute(&pool).await.unwrap();
     sqlx::query(CREATE_SETTINGS_TABLE).execute(&pool).await.unwrap();
+    // CREATE_TRACKS_TABLE already includes all extended columns;
+    // no ALTER TABLE migrations needed for a fresh in-memory DB.
+    sqlx::query(CREATE_TRACK_EXTRA_TAGS_TABLE).execute(&pool).await.unwrap();
+    sqlx::query(CREATE_TRACK_EXTRA_TAGS_INDEX).execute(&pool).await.unwrap();
 
     pool
 }
