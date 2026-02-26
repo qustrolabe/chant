@@ -326,6 +326,54 @@ function parseTrackDisc(val: string | null): { num: number | null; total: number
   };
 }
 
+// ── Row helpers (defined outside component so React doesn't remount on every render) ──
+
+function SectionHeader({ label }: { label: string }) {
+  return (
+    <tr>
+      <td
+        colSpan={3}
+        className="px-2 pt-2 pb-0.5 text-[9px] font-bold uppercase tracking-widest text-fg-muted bg-bg-surface border-b border-border-strong"
+      >
+        {label}
+      </td>
+    </tr>
+  );
+}
+
+function OriginalCell({ value }: { value: string | null }) {
+  return (
+    <td className="w-28 px-2 py-1 text-fg-muted/50 text-[10px] truncate max-w-[112px]">
+      {value ?? "—"}
+    </td>
+  );
+}
+
+function FieldRow({
+  label,
+  fs,
+  originalValue,
+  err,
+  children,
+}: {
+  label: string;
+  fs: FieldState<unknown>;
+  originalValue?: string | null;
+  err?: string;
+  children: React.ReactNode;
+}) {
+  return (
+    <tr className={`border-b border-white/5 text-xs ${rowCls(fs, err)}`}>
+      <td className="w-20 shrink-0 px-2 py-1 text-fg-muted whitespace-nowrap">{label}</td>
+      <OriginalCell value={originalValue ?? null} />
+      <td className="px-1 py-0.5 w-full">
+        {children}
+        {err && <div className="text-[9px] text-red-400 px-1 pt-0.5">{err}</div>}
+      </td>
+    </tr>
+  );
+}
+
 export function TrackEditorPanel({
   trackIds,
   onBack,
@@ -523,55 +571,6 @@ export function TrackEditorPanel({
   }
 
   const firstTrack = tracks[0];
-
-  // ── Row helper ───────────────────────────────────────────────────────────
-
-  function SectionHeader({ label }: { label: string }) {
-    return (
-      <tr>
-        <td
-          colSpan={3}
-          className="px-2 pt-2 pb-0.5 text-[9px] font-bold uppercase tracking-widest text-fg-muted bg-bg-surface border-b border-border-strong"
-        >
-          {label}
-        </td>
-      </tr>
-    );
-  }
-
-  function OriginalCell({ value }: { value: string | null }) {
-    if (!isSingle) return <td className="w-28 px-2 py-1 text-fg-muted/50 italic text-[10px]">—</td>;
-    return (
-      <td className="w-28 px-2 py-1 text-fg-secondary text-[10px] truncate max-w-[112px]">
-        {value ?? <span className="opacity-30">—</span>}
-      </td>
-    );
-  }
-
-  function FieldRow({
-    label,
-    fs,
-    originalValue,
-    err,
-    children,
-  }: {
-    label: string;
-    fs: FieldState<unknown>;
-    originalValue?: string | null;
-    err?: string;
-    children: React.ReactNode;
-  }) {
-    return (
-      <tr className={`border-b border-white/5 text-xs ${rowCls(fs, err)}`}>
-        <td className="w-20 shrink-0 px-2 py-1 text-fg-muted whitespace-nowrap">{label}</td>
-        <OriginalCell value={originalValue ?? null} />
-        <td className="px-1 py-0.5 w-full">
-          {children}
-          {err && <div className="text-[9px] text-red-400 px-1 pt-0.5">{err}</div>}
-        </td>
-      </tr>
-    );
-  }
 
   const divState: FieldState<unknown> =
     editState.title.kind === "divergent" ? editState.title : { kind: "uniform", value: null };
