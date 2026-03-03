@@ -23,7 +23,7 @@
       }
     ],
     "security": {
-      "csp": "default-src 'self' ipc: http://ipc.localhost; img-src 'self' asset: http://asset.localhost data: https://*.mzstatic.com https://coverartarchive.org",
+      "csp": "default-src 'self' ipc: http://ipc.localhost; img-src 'self' asset: http://asset.localhost data: https://*.mzstatic.com https://coverartarchive.org; media-src 'self' asset: http://asset.localhost https://*.mzstatic.com https://audio-ssl.itunes.apple.com",
       "assetProtocol": {
         "enable": true,
         "scope": [

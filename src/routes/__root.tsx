@@ -2,6 +2,7 @@ import { createRootRoute, Link, Outlet } from "@tanstack/react-router";
 import { TanStackRouterDevtools } from "@tanstack/react-router-devtools";
 import { AppTitleBar } from "../components/layout/TitleBar";
 import { StatusBar } from "../components/layout/StatusBar";
+import { PlayerBar } from "../components/layout/PlayerBar";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { CommandPalette } from "../components/CommandPalette";
 import {
@@ -172,6 +173,7 @@ function RootLayout() {
           </>
         )}
       </div>
+      <PlayerBar />
       <StatusBar />
       <TanStackRouterDevtools position="bottom-right" />
     </div>

@@ -37,6 +37,7 @@ function mapResult(item: ItunesTrack, type: SearchType): MetadataResult {
     coverUrl: item.artworkUrl100
       ? (item.artworkUrl100 as string).replace('100x100bb', '300x300bb')
       : undefined,
+    previewUrl: item.previewUrl as string | undefined,
     raw: item,
   };
 }

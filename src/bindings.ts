@@ -119,6 +119,14 @@ async batchUpdateTracks(trackIds: number[], input: TrackUpdateInput) : Promise<R
     else return { status: "error", error: e  as any };
 }
 },
+async staleTrackIds() : Promise<Result<number[], AppError>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("stale_track_ids") };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
 async getTrackExtraTags(trackId: number) : Promise<Result<ExtraTag[], AppError>> {
     try {
     return { status: "ok", data: await TAURI_INVOKE("get_track_extra_tags", { trackId }) };
@@ -238,7 +246,7 @@ mimeType: string }
 export type ExtraTag = { frameId: string; value: string }
 export type LibraryStats = { totalCollections: number; totalArtists: number; totalAlbums: number; totalTracks: number; totalSizeBytes: number; totalDurationSecs: number }
 export type Setting = { key: string; value: string }
-export type TrackRow = { id: number; collectionId: number; albumId: number | null; artistId: number | null; title: string; trackNumber: number | null; discNumber: number | null; durationSecs: number | null; filePath: string; fileSizeBytes: number; fileFormat: string | null; bitrateKbps: number | null; sampleRateHz: number | null; lyrics: string | null; createdAt: string; updatedAt: string; genre: string | null; albumArtist: string | null; composer: string | null; bpm: number | null; comment: string | null; commentLang: string | null; year: number | null; lyricsLang: string | null; trackTotal: number | null; discTotal: number | null; artistName: string | null; albumTitle: string | null; albumCoverPath: string | null }
+export type TrackRow = { id: number; collectionId: number; albumId: number | null; artistId: number | null; title: string; trackNumber: number | null; discNumber: number | null; durationSecs: number | null; filePath: string; fileSizeBytes: number; fileFormat: string | null; bitrateKbps: number | null; sampleRateHz: number | null; lyrics: string | null; createdAt: string; updatedAt: string; genre: string | null; albumArtist: string | null; composer: string | null; bpm: number | null; comment: string | null; commentLang: string | null; year: number | null; lyricsLang: string | null; trackTotal: number | null; discTotal: number | null; fileMtime: number | null; artistName: string | null; albumTitle: string | null; albumCoverPath: string | null }
 export type TrackUpdateInput = { title: string | null; trackNumber: number | null; discNumber: number | null; lyrics: string | null; 
 /**
  * Set to Some("") to clear, Some("Name") to find-or-create, None to keep existing

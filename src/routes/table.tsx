@@ -17,6 +17,8 @@ import {
 import { useContextMenu, ContextMenu } from "../components/ContextMenu";
 import { TrackEditorPanel } from "../components/TrackEditorPanel";
 import { revealItemInDir } from "@tauri-apps/plugin-opener";
+import { convertFileSrc } from "@tauri-apps/api/core";
+import { audioManager } from "@/lib/audio";
 
 export const Route = createFileRoute("/table")({
   validateSearch: (search: Record<string, unknown>): {
@@ -489,6 +491,19 @@ export function Table() {
           y={contextMenu.state.y}
           onClose={contextMenu.close}
           items={[
+            {
+              label: "Play",
+              action: () => {
+                const track = contextMenu.state.data;
+                if (track?.filePath) {
+                  audioManager.play(convertFileSrc(track.filePath), {
+                    title: track.title ?? undefined,
+                    artist: track.artistName ?? undefined,
+                  });
+                }
+              },
+            },
+            { type: "separator" as const },
             {
               label: "Show in explorer",
               action: () => {

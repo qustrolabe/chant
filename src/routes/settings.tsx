@@ -3,6 +3,23 @@ import { useEffect, useState } from "react";
 import { commands } from "../bindings";
 import { open } from "@tauri-apps/plugin-dialog";
 import { listen } from "@tauri-apps/api/event";
+import { audioManager } from "@/lib/audio";
+
+function playTestTone(volume: number) {
+  try {
+    const ctx = new AudioContext();
+    const osc = ctx.createOscillator();
+    const gain = ctx.createGain();
+    osc.connect(gain);
+    gain.connect(ctx.destination);
+    gain.gain.value = volume;
+    osc.frequency.value = 440;
+    osc.type = 'sine';
+    osc.start();
+    osc.stop(ctx.currentTime + 0.8);
+    osc.onended = () => ctx.close();
+  } catch { /* ignore */ }
+}
 
 export const Route = createFileRoute("/settings")({
   component: Settings,
@@ -14,6 +31,11 @@ function Settings() {
   const [scannedCount, setScannedCount] = useState(0);
   const [confirmClear, setConfirmClear] = useState(false);
   const [clearing, setClearing] = useState(false);
+  const [volume, setVolume] = useState(() => Math.round(audioManager.getVolume() * 100));
+
+  useEffect(() => {
+    return audioManager.onStateChange((s) => setVolume(Math.round(s.volume * 100)));
+  }, []);
 
   useEffect(() => {
     async function loadSettings() {
@@ -132,6 +154,44 @@ function Settings() {
                 </button>
               </div>
             )}
+          </div>
+        </div>
+
+        <div className="bg-bg-overlay rounded-xl p-6 border border-border-strong shadow-xl">
+          <h2 className="text-xl font-semibold mb-4 text-fg-secondary">
+            Playback
+          </h2>
+          <div className="flex flex-col gap-4">
+            <div>
+              <label className="text-[10px] uppercase tracking-wider text-fg-muted font-bold block mb-2">
+                Volume
+              </label>
+              <div className="flex items-center gap-4">
+                <input
+                  type="range"
+                  min={0}
+                  max={100}
+                  step={1}
+                  value={volume}
+                  onChange={(e) => {
+                    const v = Number(e.target.value);
+                    setVolume(v);
+                    audioManager.setVolume(v / 100);
+                  }}
+                  className="flex-1 cursor-pointer accent-amber-500"
+                />
+                <span className="w-10 text-right text-sm text-fg-secondary tabular-nums">
+                  {volume}%
+                </span>
+                <button
+                  type="button"
+                  onClick={() => playTestTone(volume / 100)}
+                  className="px-3 py-1.5 text-xs font-medium rounded-lg bg-bg-surface border border-border hover:border-border-strong text-fg-secondary transition-colors"
+                >
+                  Test tone
+                </button>
+              </div>
+            </div>
           </div>
         </div>
 

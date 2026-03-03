@@ -1,7 +1,8 @@
 import { createFileRoute } from '@tanstack/react-router';
-import { useState, useCallback } from 'react';
-import { LuCopy, LuChevronDown, LuChevronRight, LuLoader } from 'react-icons/lu';
+import { useState, useCallback, useEffect } from 'react';
+import { LuCopy, LuChevronDown, LuChevronRight, LuLoader, LuPlay, LuPause } from 'react-icons/lu';
 import { SERVICES, type MetadataResult, type SearchType, type MetadataService } from '@/lib/metadata';
+import { audioManager, type AudioState } from '@/lib/audio';
 
 const SEARCH_TYPES: { value: SearchType; label: string }[] = [
   { value: 'track', label: 'Track' },
@@ -68,23 +69,89 @@ function CollapsibleBlock({
   );
 }
 
+const RING_R = 28;
+const RING_CIRC = 2 * Math.PI * RING_R; // ≈ 175.9
+
 function ResultCard({ result }: { result: MetadataResult }) {
+  const [audioState, setAudioState] = useState<AudioState>(() => audioManager.state);
+
+  useEffect(() => {
+    return audioManager.onStateChange(setAudioState);
+  }, []);
+
+  const isActive = result.previewUrl !== undefined && audioState.src === result.previewUrl;
+  const isPlaying = isActive && audioState.playing;
+  const progress = isActive && audioState.duration > 0 ? audioState.currentTime / audioState.duration : 0;
+
+  function togglePreview() {
+    if (!result.previewUrl) return;
+    if (isPlaying) {
+      audioManager.pause();
+    } else {
+      audioManager.play(result.previewUrl, { title: result.title, artist: result.artist });
+    }
+  }
+
   return (
     <div className="group rounded-lg border border-border bg-bg-surface p-3 transition-colors hover:border-border-strong">
       <div className="flex gap-3">
         {/* Thumbnail */}
-        <div className="shrink-0">
+        <div
+          className={`relative h-16 w-16 shrink-0 overflow-hidden rounded shadow group/thumb ${result.previewUrl ? 'cursor-pointer' : ''}`}
+          onClick={result.previewUrl ? togglePreview : undefined}
+        >
           {result.coverUrl ? (
             <img
               src={result.coverUrl}
               alt={result.title}
-              className="h-16 w-16 rounded object-cover shadow"
+              className="h-full w-full object-cover"
               loading="lazy"
             />
           ) : (
-            <div className="flex h-16 w-16 items-center justify-center rounded bg-bg-overlay text-[10px] text-fg-muted">
+            <div className="flex h-full w-full items-center justify-center bg-bg-overlay text-[10px] text-fg-muted">
               No art
             </div>
+          )}
+
+          {result.previewUrl && (
+            <>
+              {/* Circular progress ring (only when active) */}
+              {isActive && (
+                <svg
+                  viewBox="0 0 64 64"
+                  className="absolute inset-0 h-full w-full pointer-events-none"
+                  style={{ transform: 'rotate(-90deg)' }}
+                >
+                  <circle
+                    cx="32" cy="32" r={RING_R}
+                    fill="none" stroke="currentColor" strokeWidth="3"
+                    className="text-accent" style={{ opacity: 0.25 }}
+                    strokeDasharray={RING_CIRC}
+                    strokeDashoffset={0}
+                  />
+                  <circle
+                    cx="32" cy="32" r={RING_R}
+                    fill="none" stroke="currentColor" strokeWidth="3"
+                    className="text-accent"
+                    strokeDasharray={RING_CIRC}
+                    strokeDashoffset={RING_CIRC * (1 - progress)}
+                    strokeLinecap="round"
+                  />
+                </svg>
+              )}
+
+              {/* Play/pause overlay */}
+              <div
+                className={`absolute inset-0 flex items-center justify-center rounded bg-black/55 transition-opacity ${
+                  isActive ? 'opacity-100' : 'opacity-0 group-hover/thumb:opacity-100'
+                }`}
+              >
+                {isPlaying
+                  ? <LuPause size={22} className="text-white drop-shadow" />
+                  : <LuPlay size={22} className="text-white drop-shadow" />
+                }
+              </div>
+            </>
           )}
         </div>
 
