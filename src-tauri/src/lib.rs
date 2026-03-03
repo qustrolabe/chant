@@ -55,6 +55,7 @@ pub fn run() {
         commands::get_track,
         commands::update_track,
         commands::batch_update_tracks,
+        commands::stale_track_ids,
         commands::get_track_extra_tags,
         commands::set_track_extra_tags,
         // Artists

@@ -489,6 +489,15 @@ fn write_tags_to_file(
     Ok(())
 }
 
+/// Read the file's modification time as Unix seconds (None if unavailable).
+fn read_file_mtime(path: &str) -> Option<i64> {
+    std::fs::metadata(path)
+        .ok()
+        .and_then(|m| m.modified().ok())
+        .and_then(|t| t.duration_since(std::time::UNIX_EPOCH).ok())
+        .map(|d| d.as_secs() as i64)
+}
+
 pub async fn update_track_inner(
     db: &DbPool,
     track_id: i64,
@@ -551,7 +560,7 @@ pub async fn update_track_inner(
     };
 
     // Write tags to file BEFORE touching the DB (file is source of truth)
-    if !skip_file_write {
+    let file_mtime = if !skip_file_write {
         write_tags_to_file(
             &existing.file_path,
             &title,
@@ -569,14 +578,17 @@ pub async fn update_track_inner(
             comment.as_deref(),
             lyrics.as_deref(),
         )?;
-    }
+        read_file_mtime(&existing.file_path)
+    } else {
+        existing.file_mtime
+    };
 
     sqlx::query(
         "UPDATE tracks SET title = ?, track_number = ?, disc_number = ?, lyrics = ?, \
          artist_id = ?, album_id = ?, \
          genre = ?, album_artist = ?, composer = ?, bpm = ?, \
          comment = ?, comment_lang = ?, year = ?, lyrics_lang = ?, \
-         track_total = ?, disc_total = ?, \
+         track_total = ?, disc_total = ?, file_mtime = ?, \
          updated_at = ? WHERE id = ?",
     )
     .bind(&title)
@@ -595,6 +607,7 @@ pub async fn update_track_inner(
     .bind(&lyrics_lang)
     .bind(track_total)
     .bind(disc_total)
+    .bind(file_mtime)
     .bind(&now)
     .bind(track_id)
     .execute(db)
@@ -705,8 +718,9 @@ pub async fn batch_update_tracks_inner(
             }
         };
 
-        // Write tags to file (warn on failure — batch continues for remaining tracks)
-        if !skip_file_write {
+        // Write tags to file — skip DB update for this track if the write fails
+        // (file is source of truth; DB must not diverge from the file)
+        let file_mtime = if !skip_file_write {
             let artist_name_str = match input.artist_name.as_deref() {
                 None => existing.artist_name.as_deref(),
                 Some("") => None,
@@ -734,16 +748,20 @@ pub async fn batch_update_tracks_inner(
                 comment.as_deref(),
                 lyrics.as_deref(),
             ) {
-                warn!("Failed to write tags to {:?}: {}", existing.file_path, e);
+                warn!("Skipping DB update for {:?}: file write failed: {}", existing.file_path, e);
+                continue;
             }
-        }
+            read_file_mtime(&existing.file_path)
+        } else {
+            existing.file_mtime
+        };
 
         sqlx::query(
             "UPDATE tracks SET title = ?, track_number = ?, disc_number = ?, lyrics = ?, \
              artist_id = ?, album_id = ?, \
              genre = ?, album_artist = ?, composer = ?, bpm = ?, \
              comment = ?, comment_lang = ?, year = ?, lyrics_lang = ?, \
-             track_total = ?, disc_total = ?, \
+             track_total = ?, disc_total = ?, file_mtime = ?, \
              updated_at = ? WHERE id = ?",
         )
         .bind(&title)
@@ -762,6 +780,7 @@ pub async fn batch_update_tracks_inner(
         .bind(&lyrics_lang)
         .bind(track_total)
         .bind(disc_total)
+        .bind(file_mtime)
         .bind(&now)
         .bind(id)
         .execute(&mut *tx)
@@ -779,6 +798,34 @@ pub async fn batch_update_tracks(
     input: TrackUpdateInput,
 ) -> Result<(), AppError> {
     batch_update_tracks_inner(db.inner(), track_ids, input, false).await
+}
+
+// ── Stale Track Detection ──
+
+/// Returns the IDs of tracks whose file has been modified externally since the last scan/update.
+/// A track is stale when its actual on-disk mtime is newer than the stored `file_mtime`.
+pub async fn stale_track_ids_inner(db: &DbPool) -> Result<Vec<i64>, AppError> {
+    let rows: Vec<(i64, String, i64)> = sqlx::query_as(
+        "SELECT id, file_path, file_mtime FROM tracks WHERE file_mtime IS NOT NULL",
+    )
+    .fetch_all(db)
+    .await?;
+
+    let stale = rows
+        .into_iter()
+        .filter_map(|(id, file_path, db_mtime)| {
+            let actual = read_file_mtime(&file_path)?;
+            if actual > db_mtime { Some(id) } else { None }
+        })
+        .collect();
+
+    Ok(stale)
+}
+
+#[tauri::command]
+#[specta::specta]
+pub async fn stale_track_ids(db: State<'_, DbPool>) -> Result<Vec<i64>, AppError> {
+    stale_track_ids_inner(db.inner()).await
 }
 
 // ── Extra Tag Commands ──
@@ -1051,7 +1098,13 @@ async fn process_track(
     covers_dir: Option<&Path>,
 ) -> Result<(), AppError> {
     let path_str = path.to_string_lossy().replace('\\', "/");
-    let file_size = std::fs::metadata(path).map(|m| m.len() as i64).unwrap_or(0);
+    let meta = std::fs::metadata(path);
+    let file_size = meta.as_ref().map(|m| m.len() as i64).unwrap_or(0);
+    let file_mtime: Option<i64> = meta
+        .ok()
+        .and_then(|m| m.modified().ok())
+        .and_then(|t| t.duration_since(std::time::UNIX_EPOCH).ok())
+        .map(|d| d.as_secs() as i64);
     let now = Utc::now().to_rfc3339();
 
     // Read tags
@@ -1213,8 +1266,8 @@ async fn process_track(
             track_number, disc_number, duration_secs,
             file_path, file_size_bytes, file_format,
             genre, album_artist, composer, bpm, comment, lyrics,
-            created_at, updated_at
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            file_mtime, created_at, updated_at
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         ON CONFLICT(file_path) DO UPDATE SET
             album_id = excluded.album_id,
             artist_id = excluded.artist_id,
@@ -1229,6 +1282,7 @@ async fn process_track(
             bpm = excluded.bpm,
             comment = excluded.comment,
             lyrics = excluded.lyrics,
+            file_mtime = excluded.file_mtime,
             updated_at = excluded.updated_at
         "#
     )
@@ -1248,6 +1302,7 @@ async fn process_track(
     .bind(bpm)
     .bind(&comment)
     .bind(&lyrics_text)
+    .bind(file_mtime)
     .bind(&now)
     .bind(&now)
     .execute(&mut *tx)
@@ -2458,5 +2513,130 @@ mod tests {
         // Extra tags should be cascaded away
         let fetched = get_track_extra_tags_inner(&db, track_id).await.unwrap();
         assert!(fetched.is_empty(), "extra tags should be deleted when track is deleted");
+    }
+
+    // ── File mtime / DB-as-cache hardening tests ──
+
+    #[tokio::test]
+    async fn test_batch_update_skips_db_on_file_write_failure() {
+        let db = setup_test_db().await;
+        let tmp = tempfile::tempdir().unwrap();
+
+        let _mp3a = make_tagged_mp3(tmp.path(), "a.mp3", "Track A", "Artist A", "Album A");
+        let _mp3b = make_tagged_mp3(tmp.path(), "b.mp3", "Track B", "Artist B", "Album B");
+        let col_path = tmp.path().to_string_lossy().replace('\\', "/");
+        let col = add_collection_inner(&db, CollectionInput { path: col_path, label: None }, true).await.unwrap();
+        scan_collection_inner(&db, col.id, None, |_| {}).await.unwrap();
+
+        let tracks = list_tracks_inner(&db).await.unwrap();
+        assert_eq!(tracks.len(), 2);
+
+        // Identify the two tracks and delete one file so its write will fail
+        let (gone_id, live_id) = if tracks[0].file_path.ends_with("a.mp3") {
+            (tracks[0].id, tracks[1].id)
+        } else {
+            (tracks[1].id, tracks[0].id)
+        };
+        let gone_path = get_track_inner(&db, gone_id).await.unwrap().file_path;
+        std::fs::remove_file(&gone_path).unwrap();
+
+        batch_update_tracks_inner(&db, vec![gone_id, live_id], TrackUpdateInput {
+            title: Some("New Title".into()),
+            ..Default::default()
+        }, false).await.unwrap();
+
+        let gone_after = get_track_inner(&db, gone_id).await.unwrap();
+        let live_after = get_track_inner(&db, live_id).await.unwrap();
+
+        // File write for "gone" failed → DB must NOT be updated
+        assert_ne!(gone_after.title, "New Title",
+            "DB should not be updated when file write fails");
+        // File write for "live" succeeded → DB must be updated
+        assert_eq!(live_after.title, "New Title",
+            "DB should be updated when file write succeeds");
+    }
+
+    #[tokio::test]
+    async fn test_scan_stores_file_mtime() {
+        let db = setup_test_db().await;
+        let tmp = tempfile::tempdir().unwrap();
+
+        let mp3 = make_tagged_mp3(tmp.path(), "song.mp3", "Title", "Artist", "Album");
+        let expected_mtime = std::fs::metadata(&mp3)
+            .unwrap()
+            .modified()
+            .unwrap()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_secs() as i64;
+
+        let col_path = tmp.path().to_string_lossy().replace('\\', "/");
+        let col = add_collection_inner(&db, CollectionInput { path: col_path, label: None }, true).await.unwrap();
+        scan_collection_inner(&db, col.id, None, |_| {}).await.unwrap();
+
+        let tracks = list_tracks_inner(&db).await.unwrap();
+        assert_eq!(tracks.len(), 1);
+        let stored = tracks[0].file_mtime.expect("file_mtime should be stored after scan");
+        assert_eq!(stored, expected_mtime, "stored mtime should match file mtime");
+    }
+
+    #[tokio::test]
+    async fn test_update_track_updates_mtime() {
+        let db = setup_test_db().await;
+        let tmp = tempfile::tempdir().unwrap();
+
+        let mp3 = make_tagged_mp3(tmp.path(), "song.mp3", "Original", "Artist", "Album");
+        let col_path = tmp.path().to_string_lossy().replace('\\', "/");
+        let col = add_collection_inner(&db, CollectionInput { path: col_path, label: None }, true).await.unwrap();
+        scan_collection_inner(&db, col.id, None, |_| {}).await.unwrap();
+
+        let tracks = list_tracks_inner(&db).await.unwrap();
+        let track_id = tracks[0].id;
+
+        update_track_inner(&db, track_id, TrackUpdateInput {
+            title: Some("Updated".into()),
+            ..Default::default()
+        }, false).await.unwrap();
+
+        let after = get_track_inner(&db, track_id).await.unwrap();
+        let db_mtime = after.file_mtime.expect("file_mtime should be set after update");
+        let actual_mtime = std::fs::metadata(&mp3)
+            .unwrap()
+            .modified()
+            .unwrap()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_secs() as i64;
+        assert_eq!(db_mtime, actual_mtime,
+            "DB mtime should match actual file mtime after update");
+    }
+
+    #[tokio::test]
+    async fn test_stale_track_ids_detects_external_edit() {
+        let db = setup_test_db().await;
+        let tmp = tempfile::tempdir().unwrap();
+
+        let _mp3 = make_tagged_mp3(tmp.path(), "song.mp3", "Title", "Artist", "Album");
+        let col_path = tmp.path().to_string_lossy().replace('\\', "/");
+        let col = add_collection_inner(&db, CollectionInput { path: col_path, label: None }, true).await.unwrap();
+        scan_collection_inner(&db, col.id, None, |_| {}).await.unwrap();
+
+        let tracks = list_tracks_inner(&db).await.unwrap();
+        let track_id = tracks[0].id;
+
+        // No stale tracks right after scan
+        let stale = stale_track_ids_inner(&db).await.unwrap();
+        assert!(!stale.contains(&track_id), "track should not be stale right after scan");
+
+        // Simulate external edit by setting DB mtime 1 second in the past
+        sqlx::query("UPDATE tracks SET file_mtime = file_mtime - 1 WHERE id = ?")
+            .bind(track_id)
+            .execute(&db)
+            .await
+            .unwrap();
+
+        let stale = stale_track_ids_inner(&db).await.unwrap();
+        assert!(stale.contains(&track_id),
+            "track should be detected as stale when file is newer than DB mtime");
     }
 }

@@ -77,7 +77,8 @@ CREATE TABLE IF NOT EXISTS tracks (
     year            INTEGER,
     lyrics_lang     TEXT,
     track_total     INTEGER,
-    disc_total      INTEGER
+    disc_total      INTEGER,
+    file_mtime      INTEGER
 )
 "#;
 
@@ -130,6 +131,8 @@ pub const MIGRATE_TRACKS_ADD_TRACK_TOTAL: &str =
     "ALTER TABLE tracks ADD COLUMN track_total INTEGER";
 pub const MIGRATE_TRACKS_ADD_DISC_TOTAL: &str =
     "ALTER TABLE tracks ADD COLUMN disc_total INTEGER";
+pub const MIGRATE_TRACKS_ADD_FILE_MTIME: &str =
+    "ALTER TABLE tracks ADD COLUMN file_mtime INTEGER";
 
 // ── Extra tags table ──
 

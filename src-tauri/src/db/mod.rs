@@ -77,6 +77,7 @@ pub async fn init_db(app_handle: &tauri::AppHandle) -> Result<DbPool, sqlx::Erro
         MIGRATE_TRACKS_ADD_LYRICS_LANG,
         MIGRATE_TRACKS_ADD_TRACK_TOTAL,
         MIGRATE_TRACKS_ADD_DISC_TOTAL,
+        MIGRATE_TRACKS_ADD_FILE_MTIME,
     ] {
         if let Err(e) = sqlx::query(stmt).execute(&pool).await {
             let msg = e.to_string();

@@ -152,6 +152,7 @@ pub struct TrackRow {
     pub lyrics_lang: Option<String>,
     pub track_total: Option<i32>,
     pub disc_total: Option<i32>,
+    pub file_mtime: Option<i64>,
     // Joined columns
     pub artist_name: Option<String>,
     pub album_title: Option<String>,
