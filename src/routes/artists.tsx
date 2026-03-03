@@ -206,9 +206,8 @@ function Artists() {
                 artist={artist}
                 onClick={() =>
                   navigate({
-                    to: "/artists/$artistId",
-                    params: { artistId: String(artist.id) },
-                    search: { name: artist.name },
+                    to: "/table",
+                    search: { artistId: artist.id, artistName: artist.name },
                   })}
                 onContextMenu={(e) => {
                   e.preventDefault();
@@ -268,9 +267,8 @@ function Artists() {
                     key={row.id}
                     onClick={() =>
                       navigate({
-                        to: "/artists/$artistId",
-                        params: { artistId: String(row.original.id) },
-                        search: { name: row.original.name },
+                        to: "/table",
+                        search: { artistId: row.original.id, artistName: row.original.name },
                       })}
                     onContextMenu={(e) => {
                       e.preventDefault();

@@ -72,9 +72,8 @@ function ArtistDetail() {
               gradient={GRADIENTS[i % GRADIENTS.length]}
               onClick={() =>
                 navigate({
-                  to: "/albums/$albumId",
-                  params: { albumId: String(album.id) },
-                  search: { name: album.title },
+                  to: "/table",
+                  search: { albumId: album.id, albumName: album.title },
                 })
               }
               onContextMenu={(e) => {

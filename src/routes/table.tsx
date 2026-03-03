@@ -1,12 +1,14 @@
-import { createFileRoute } from "@tanstack/react-router";
+import { createFileRoute, useNavigate } from "@tanstack/react-router";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { commands, TrackRow } from "../bindings";
 import { queryKeys } from "../lib/queryClient";
 import {
   createColumnHelper,
+  FilterFn,
   flexRender,
   getCoreRowModel,
+  getFilteredRowModel,
   getSortedRowModel,
   SortingState,
   VisibilityState,
@@ -17,6 +19,12 @@ import { TrackEditorPanel } from "../components/TrackEditorPanel";
 import { revealItemInDir } from "@tauri-apps/plugin-opener";
 
 export const Route = createFileRoute("/table")({
+  validateSearch: (search: Record<string, unknown>) => ({
+    albumId: typeof search.albumId === "number" ? search.albumId : undefined,
+    albumName: typeof search.albumName === "string" ? search.albumName : undefined,
+    artistId: typeof search.artistId === "number" ? search.artistId : undefined,
+    artistName: typeof search.artistName === "string" ? search.artistName : undefined,
+  }),
   component: Table,
 });
 
@@ -30,6 +38,15 @@ const defaultColumnVisibility: VisibilityState = {
   filePath: false,
 };
 
+const trackTextFilter: FilterFn<TrackRow> = (row, _columnId, filterValue) => {
+  const q = String(filterValue).toLowerCase();
+  return (
+    (row.original.title ?? "").toLowerCase().includes(q) ||
+    (row.original.artistName ?? "").toLowerCase().includes(q) ||
+    (row.original.albumTitle ?? "").toLowerCase().includes(q)
+  );
+};
+
 function formatDuration(secs: number | null) {
   if (!secs) return "";
   const m = Math.floor(secs / 60);
@@ -39,6 +56,9 @@ function formatDuration(secs: number | null) {
 
 
 export function Table() {
+  const search = Route.useSearch();
+  const navigate = useNavigate();
+
   const { data: tracks = [] } = useQuery({
     queryKey: queryKeys.tracks,
     queryFn: async () => {
@@ -47,15 +67,24 @@ export function Table() {
       return res.data;
     },
   });
+
   const [sorting, setSorting] = useState<SortingState>([]);
   const [columnVisibility, setColumnVisibility] =
     useState<VisibilityState>(defaultColumnVisibility);
   const [showColumnMenu, setShowColumnMenu] = useState(false);
   const [selectedIds, setSelectedIds] = useState<Set<number>>(new Set());
+  const [globalFilter, setGlobalFilter] = useState("");
   const columnMenuRef = useRef<HTMLDivElement>(null);
   const columnMenuBtnRef = useRef<HTMLButtonElement>(null);
   const lastClickedIndexRef = useRef<number | null>(null);
   const contextMenu = useContextMenu<TrackRow>();
+
+  // Reset selection and text filter when navigating to a different context
+  useEffect(() => {
+    setSelectedIds(new Set());
+    setGlobalFilter("");
+    lastClickedIndexRef.current = null;
+  }, [search.albumId, search.artistId]);
 
   // Close column menu on outside click
   useEffect(() => {
@@ -73,6 +102,13 @@ export function Table() {
     document.addEventListener("mousedown", handleClick);
     return () => document.removeEventListener("mousedown", handleClick);
   }, [showColumnMenu]);
+
+  // Pre-filter by albumId or artistId from URL params
+  const displayTracks = useMemo(() => {
+    if (search.albumId != null) return tracks.filter((t) => t.albumId === search.albumId);
+    if (search.artistId != null) return tracks.filter((t) => t.artistId === search.artistId);
+    return tracks;
+  }, [tracks, search.albumId, search.artistId]);
 
   const columns = useMemo(
     () => [
@@ -192,20 +228,26 @@ export function Table() {
   );
 
   const table = useReactTable({
-    data: tracks,
+    data: displayTracks,
     columns,
     columnResizeMode: "onChange",
+    globalFilterFn: trackTextFilter,
     state: {
       sorting,
       columnVisibility,
+      globalFilter,
     },
     onSortingChange: setSorting,
     onColumnVisibilityChange: setColumnVisibility,
+    onGlobalFilterChange: setGlobalFilter,
     getCoreRowModel: getCoreRowModel(),
+    getFilteredRowModel: getFilteredRowModel(),
     getSortedRowModel: getSortedRowModel(),
   });
 
-  const sortedRows = table.getRowModel().rows;
+  const visibleRows = table.getRowModel().rows;
+  const filteredCount = table.getFilteredRowModel().rows.length;
+  const isFiltered = search.albumId != null || search.artistId != null || globalFilter.length > 0;
 
   function handleRowClick(
     e: React.MouseEvent,
@@ -216,7 +258,7 @@ export function Table() {
       // Range select
       const start = Math.min(lastClickedIndexRef.current, rowIndex);
       const end = Math.max(lastClickedIndexRef.current, rowIndex);
-      const rangeIds = sortedRows
+      const rangeIds = visibleRows
         .slice(start, end + 1)
         .map((r) => r.original.id);
       setSelectedIds((prev) => {
@@ -243,22 +285,65 @@ export function Table() {
   return (
     <div className="h-full flex flex-col">
       {/* Header */}
-      <div className="px-4 py-2 flex items-center justify-between border-b border-border bg-bg-base/80 backdrop-blur-md sticky top-0 z-30 flex-shrink-0">
-        <h1 className="text-sm font-semibold text-fg-primary">Table</h1>
-        <div className="flex items-center gap-3">
-          {selectedIds.size > 0 && (
+      <div className="px-4 py-2 flex items-center gap-3 border-b border-border bg-bg-base/80 backdrop-blur-md sticky top-0 z-30 flex-shrink-0">
+        <h1 className="text-sm font-semibold text-fg-primary flex-shrink-0">Table</h1>
+
+        {/* Context filter chip */}
+        {search.albumId != null && (
+          <span className="flex items-center gap-1 text-xs bg-accent-muted text-accent px-2 py-0.5 rounded-full border border-accent/30 flex-shrink-0 max-w-[200px]">
+            <span className="truncate">Album: {search.albumName}</span>
+            <button
+              type="button"
+              onClick={() => navigate({ to: "/table" })}
+              className="ml-0.5 flex-shrink-0 hover:text-fg-primary transition-colors"
+              title="Clear filter"
+            >
+              ✕
+            </button>
+          </span>
+        )}
+        {search.artistId != null && (
+          <span className="flex items-center gap-1 text-xs bg-accent-muted text-accent px-2 py-0.5 rounded-full border border-accent/30 flex-shrink-0 max-w-[200px]">
+            <span className="truncate">Artist: {search.artistName}</span>
+            <button
+              type="button"
+              onClick={() => navigate({ to: "/table" })}
+              className="ml-0.5 flex-shrink-0 hover:text-fg-primary transition-colors"
+              title="Clear filter"
+            >
+              ✕
+            </button>
+          </span>
+        )}
+
+        {/* Text filter input */}
+        <input
+          type="text"
+          placeholder="Filter tracks…"
+          value={globalFilter}
+          onChange={(e) => setGlobalFilter(e.target.value)}
+          className="flex-1 min-w-0 max-w-xs text-xs bg-bg-overlay border border-border rounded px-2 py-0.5 text-fg-primary placeholder:text-fg-muted focus:outline-none focus:border-accent transition-colors"
+        />
+
+        {/* Song count / selection info */}
+        <div className="ml-auto flex items-center gap-3 flex-shrink-0">
+          {selectedIds.size > 0 ? (
             <button
               type="button"
               onClick={() => setSelectedIds(new Set())}
               className="text-xs text-fg-muted hover:text-fg-primary transition-colors"
               title="Clear selection"
             >
-              ✕ {selectedIds.size} of {tracks.length} selected
+              ✕ {selectedIds.size} of {filteredCount} selected
             </button>
+          ) : (
+            <div className="text-xs text-fg-muted">
+              {isFiltered
+                ? `${filteredCount} of ${tracks.length} songs`
+                : `${tracks.length} songs`}
+            </div>
           )}
-          {selectedIds.size === 0 && (
-            <div className="text-xs text-fg-muted">{tracks.length} songs</div>
-          )}
+
           <div className="relative">
             <button
               ref={columnMenuBtnRef}
@@ -339,7 +424,7 @@ export function Table() {
               ))}
             </thead>
             <tbody>
-              {sortedRows.map((row, rowIndex) => {
+              {visibleRows.map((row, rowIndex) => {
                 const isSelected = selectedIds.has(row.original.id);
                 return (
                   <tr

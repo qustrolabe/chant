@@ -239,9 +239,8 @@ function Albums() {
                 gradient={GRADIENTS[i % GRADIENTS.length]}
                 onClick={() =>
                   navigate({
-                    to: "/albums/$albumId",
-                    params: { albumId: String(album.id) },
-                    search: { name: album.title },
+                    to: "/table",
+                    search: { albumId: album.id, albumName: album.title },
                   })}
                 onContextMenu={(e) => {
                   e.preventDefault();
@@ -301,9 +300,8 @@ function Albums() {
                     key={row.id}
                     onClick={() =>
                       navigate({
-                        to: "/albums/$albumId",
-                        params: { albumId: String(row.original.id) },
-                        search: { name: row.original.title },
+                        to: "/table",
+                        search: { albumId: row.original.id, albumName: row.original.title },
                       })}
                     onContextMenu={(e) => {
                       e.preventDefault();

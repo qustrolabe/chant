@@ -124,34 +124,69 @@ function ResultCard({ result }: { result: MetadataResult }) {
   );
 }
 
+interface SearchTab {
+  id: string;
+  query: string;
+  serviceId: string;
+  searchType: SearchType;
+  results: MetadataResult[];
+  loading: boolean;
+  error: string | null;
+}
+
 function MetadataSearchPage() {
   const [searchText, setSearchText] = useState('');
   const [searchType, setSearchType] = useState<SearchType>('track');
   const [selectedServiceId, setSelectedServiceId] = useState<string>(SERVICES[0].id);
-  const [results, setResults] = useState<MetadataResult[]>([]);
-  const [loading, setLoading] = useState(false);
-  const [error, setError] = useState<string | null>(null);
-  const [hasSearched, setHasSearched] = useState(false);
+  const [tabs, setTabs] = useState<SearchTab[]>([]);
+  const [activeTabId, setActiveTabId] = useState<string | null>(null);
 
   const activeService: MetadataService | undefined = SERVICES.find((s) => s.id === selectedServiceId);
 
   const handleSearch = useCallback(async () => {
     if (!searchText.trim() || !activeService) return;
 
-    setLoading(true);
-    setError(null);
-    setResults([]);
-    setHasSearched(true);
+    const id = crypto.randomUUID();
+    const newTab: SearchTab = {
+      id,
+      query: searchText.trim(),
+      serviceId: selectedServiceId,
+      searchType,
+      results: [],
+      loading: true,
+      error: null,
+    };
+
+    setTabs((prev) => [...prev, newTab]);
+    setActiveTabId(id);
 
     try {
-      const res = await activeService.search({ text: searchText.trim(), type: searchType });
-      setResults(res);
+      const res = await activeService.search({ text: newTab.query, type: searchType });
+      setTabs((prev) =>
+        prev.map((t) => (t.id === id ? { ...t, results: res, loading: false } : t))
+      );
     } catch (err) {
-      setError(err instanceof Error ? err.message : 'Search failed');
-    } finally {
-      setLoading(false);
+      setTabs((prev) =>
+        prev.map((t) =>
+          t.id === id
+            ? { ...t, error: err instanceof Error ? err.message : 'Search failed', loading: false }
+            : t
+        )
+      );
     }
-  }, [searchText, searchType, activeService]);
+  }, [searchText, searchType, selectedServiceId, activeService]);
+
+  function closeTab(id: string) {
+    setTabs((prev) => {
+      const next = prev.filter((t) => t.id !== id);
+      if (id === activeTabId) {
+        const idx = prev.findIndex((t) => t.id === id);
+        const fallback = next[idx] ?? next[idx - 1] ?? null;
+        setActiveTabId(fallback?.id ?? null);
+      }
+      return next;
+    });
+  }
 
   const handleKeyDown = (e: React.KeyboardEvent) => {
     if (e.key === 'Enter') handleSearch();
@@ -163,28 +198,16 @@ function MetadataSearchPage() {
       setSearchType(svc.supportsTypes[0]);
     }
     setSelectedServiceId(id);
-    setResults([]);
-    setError(null);
-    setHasSearched(false);
   };
 
   const handleTypeChange = (type: SearchType) => {
     setSearchType(type);
-    setResults([]);
-    setError(null);
-    setHasSearched(false);
   };
+
+  const activeTab = tabs.find((t) => t.id === activeTabId) ?? null;
 
   return (
     <div className="flex h-full flex-col overflow-hidden">
-      {/* Header */}
-      <div className="border-b border-border bg-bg-surface px-6 py-4">
-        <h1 className="text-base font-semibold text-fg-primary">Metadata Search</h1>
-        <p className="mt-0.5 text-[11px] text-fg-muted">
-          Search external music databases for track, album, and artist information.
-        </p>
-      </div>
-
       {/* Toolbar */}
       <div className="flex flex-wrap items-center gap-3 border-b border-border bg-bg-surface px-6 py-3">
         {/* Search type toggle — filtered to types the active service supports */}
@@ -234,42 +257,69 @@ function MetadataSearchPage() {
           />
           <button
             onClick={handleSearch}
-            disabled={loading || !searchText.trim()}
+            disabled={!searchText.trim()}
             className="rounded-lg bg-accent px-4 py-1.5 text-[12px] font-semibold text-bg-base transition-all hover:bg-accent-hover active:scale-95 disabled:opacity-50"
           >
-            {loading ? 'Searching…' : 'Search'}
+            Search
           </button>
         </div>
       </div>
 
+      {/* Tab bar */}
+      {tabs.length > 0 && (
+        <div className="flex items-center gap-1 border-b border-border bg-bg-surface px-3 overflow-x-auto flex-shrink-0">
+          {tabs.map((tab) => (
+            <button
+              key={tab.id}
+              onClick={() => setActiveTabId(tab.id)}
+              className={`flex items-center gap-1.5 px-3 py-1.5 text-xs rounded-t border-b-2 whitespace-nowrap transition-colors ${
+                tab.id === activeTabId
+                  ? 'border-accent text-fg-primary font-medium'
+                  : 'border-transparent text-fg-muted hover:text-fg-secondary'
+              }`}
+            >
+              {tab.loading && <LuLoader size={10} className="animate-spin flex-shrink-0" />}
+              <span className="max-w-[120px] truncate">{tab.query}</span>
+              <span
+                role="button"
+                onClick={(e) => { e.stopPropagation(); closeTab(tab.id); }}
+                className="ml-0.5 opacity-50 hover:opacity-100 transition-opacity text-[10px]"
+              >
+                ✕
+              </span>
+            </button>
+          ))}
+        </div>
+      )}
+
       {/* Results */}
       <div className="flex-1 overflow-auto p-6">
-        {loading && (
-          <div className="flex items-center gap-2 text-[13px] text-fg-muted">
-            <LuLoader size={14} className="animate-spin" />
-            Searching {activeService?.name}…
-          </div>
-        )}
-
-        {error && (
-          <div className="rounded-lg border border-red-500/30 bg-red-500/10 px-4 py-3 text-[13px] text-red-400">
-            {error}
-          </div>
-        )}
-
-        {!loading && !error && hasSearched && results.length === 0 && (
-          <p className="text-[13px] text-fg-muted">No results found.</p>
-        )}
-
-        {!loading && !error && !hasSearched && (
+        {!activeTab && (
           <p className="text-[13px] text-fg-muted">
             Enter a search query above and press Search.
           </p>
         )}
 
-        {results.length > 0 && (
+        {activeTab?.loading && (
+          <div className="flex items-center gap-2 text-[13px] text-fg-muted">
+            <LuLoader size={14} className="animate-spin" />
+            Searching…
+          </div>
+        )}
+
+        {activeTab?.error && (
+          <div className="rounded-lg border border-red-500/30 bg-red-500/10 px-4 py-3 text-[13px] text-red-400">
+            {activeTab.error}
+          </div>
+        )}
+
+        {activeTab && !activeTab.loading && !activeTab.error && activeTab.results.length === 0 && (
+          <p className="text-[13px] text-fg-muted">No results found.</p>
+        )}
+
+        {activeTab && activeTab.results.length > 0 && (
           <div className="flex flex-col gap-3">
-            {results.map((result) => (
+            {activeTab.results.map((result) => (
               <ResultCard key={result.id} result={result} />
             ))}
           </div>
