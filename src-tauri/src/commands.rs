@@ -1,11 +1,13 @@
 use crate::db::DbPool;
 use crate::models::{
     Album, AlbumRow, AppError, Artist, ArtistRow, Collection, CollectionInput, CoverArt,
-    ExtraTag, LibraryStats, Setting, Track, TrackRow, TrackUpdateInput,
+    ExtraTag, LibraryStats, Setting, TrackRow, TrackUpdateInput,
 };
 use chrono::Utc;
+use lofty::config::WriteOptions;
 use lofty::prelude::*;
 use lofty::probe::Probe;
+use lofty::tag::{Tag, TagItem, ItemValue};
 use log::{error, info, warn};
 use sqlx::{Column, Row};
 use std::path::{Path, PathBuf};
@@ -382,20 +384,121 @@ async fn find_or_create_album(
     Ok(res.last_insert_rowid())
 }
 
+/// Write tag fields to the audio file via Lofty.
+/// Called before any DB update so the file is always the source of truth.
+/// Fields that are DB-only (collection_id, timestamps, comment_lang, lyrics_lang)
+/// are intentionally not written to the file.
+fn write_tags_to_file(
+    file_path: &str,
+    title: &str,
+    artist_name: Option<&str>,
+    album_title: Option<&str>,
+    year: Option<i32>,
+    track_number: Option<i32>,
+    disc_number: Option<i32>,
+    track_total: Option<i32>,
+    disc_total: Option<i32>,
+    genre: Option<&str>,
+    album_artist: Option<&str>,
+    composer: Option<&str>,
+    bpm: Option<i32>,
+    comment: Option<&str>,
+    lyrics: Option<&str>,
+) -> Result<(), AppError> {
+    let path = Path::new(file_path);
+    let mut tagged_file = Probe::open(path)
+        .map_err(|e| AppError::Io(format!("Cannot open audio file: {e}")))?
+        .read()
+        .map_err(|e| AppError::Io(format!("Cannot read audio file tags: {e}")))?;
+
+    // Ensure there is a tag to write into
+    if tagged_file.primary_tag().is_none() && tagged_file.first_tag().is_none() {
+        let tag_type = tagged_file.primary_tag_type();
+        tagged_file.insert_tag(Tag::new(tag_type));
+    }
+    let tag = if tagged_file.primary_tag().is_some() {
+        tagged_file.primary_tag_mut().unwrap()
+    } else {
+        tagged_file
+            .first_tag_mut()
+            .ok_or_else(|| AppError::Io("No writable tag found in audio file".into()))?
+    };
+
+    // Standard fields via Accessor trait
+    tag.set_title(title.to_string());
+
+    match artist_name.filter(|s| !s.is_empty()) {
+        Some(v) => tag.set_artist(v.to_string()),
+        None => tag.remove_artist(),
+    }
+    match album_title.filter(|s| !s.is_empty()) {
+        Some(v) => tag.set_album(v.to_string()),
+        None => tag.remove_album(),
+    }
+    match year.filter(|&y| y > 0) {
+        Some(y) => tag.set_year(y as u32),
+        None => tag.remove_year(),
+    }
+    match track_number.filter(|&n| n > 0) {
+        Some(n) => tag.set_track(n as u32),
+        None => tag.remove_track(),
+    }
+    match disc_number.filter(|&n| n > 0) {
+        Some(n) => tag.set_disk(n as u32),
+        None => tag.remove_disk(),
+    }
+    match genre.filter(|s| !s.is_empty()) {
+        Some(v) => tag.set_genre(v.to_string()),
+        None => tag.remove_genre(),
+    }
+
+    // Extended fields via ItemKey (no Accessor convenience method)
+    tag.remove_key(&ItemKey::AlbumArtist);
+    if let Some(v) = album_artist.filter(|s| !s.is_empty()) {
+        tag.insert(TagItem::new(ItemKey::AlbumArtist, ItemValue::Text(v.to_string())));
+    }
+    tag.remove_key(&ItemKey::Composer);
+    if let Some(v) = composer.filter(|s| !s.is_empty()) {
+        tag.insert(TagItem::new(ItemKey::Composer, ItemValue::Text(v.to_string())));
+    }
+    tag.remove_key(&ItemKey::Comment);
+    if let Some(v) = comment.filter(|s| !s.is_empty()) {
+        tag.insert(TagItem::new(ItemKey::Comment, ItemValue::Text(v.to_string())));
+    }
+    tag.remove_key(&ItemKey::Lyrics);
+    if let Some(v) = lyrics.filter(|s| !s.is_empty()) {
+        tag.insert(TagItem::new(ItemKey::Lyrics, ItemValue::Text(v.to_string())));
+    }
+    tag.remove_key(&ItemKey::Bpm);
+    if let Some(b) = bpm {
+        tag.insert(TagItem::new(ItemKey::Bpm, ItemValue::Text(b.to_string())));
+    }
+    tag.remove_key(&ItemKey::TrackTotal);
+    if let Some(t) = track_total.filter(|&t| t > 0) {
+        tag.insert(TagItem::new(ItemKey::TrackTotal, ItemValue::Text(t.to_string())));
+    }
+    tag.remove_key(&ItemKey::DiscTotal);
+    if let Some(d) = disc_total.filter(|&d| d > 0) {
+        tag.insert(TagItem::new(ItemKey::DiscTotal, ItemValue::Text(d.to_string())));
+    }
+
+    tagged_file
+        .save_to_path(path, WriteOptions::default())
+        .map_err(|e| AppError::Io(format!("Failed to save audio file: {e}")))?;
+
+    Ok(())
+}
+
 pub async fn update_track_inner(
     db: &DbPool,
     track_id: i64,
     input: TrackUpdateInput,
+    skip_file_write: bool,
 ) -> Result<TrackRow, AppError> {
     let now = Utc::now().to_rfc3339();
 
-    let existing = sqlx::query_as::<_, Track>(
-        "SELECT * FROM tracks WHERE id = ?",
-    )
-    .bind(track_id)
-    .fetch_optional(db)
-    .await?
-    .ok_or_else(|| AppError::NotFound(format!("Track {} not found", track_id)))?;
+    // Use joined query so we have artist_name and album_title strings for the file write
+    let existing = get_track_inner(db, track_id).await?;
 
     let title = input.title.unwrap_or(existing.title);
     let track_number = input.track_number.or(existing.track_number);
@@ -434,6 +537,39 @@ pub async fn update_track_inner(
         Some("") => None,
         Some(title) => Some(find_or_create_album(db, title, new_artist_id).await?),
     };
+
+    // Derive name strings for the file write from the merged input + existing joined values
+    let artist_name_str = match input.artist_name.as_deref() {
+        None => existing.artist_name.as_deref(),
+        Some("") => None,
+        Some(name) => Some(name),
+    };
+    let album_title_str = match input.album_title.as_deref() {
+        None => existing.album_title.as_deref(),
+        Some("") => None,
+        Some(t) => Some(t),
+    };
+
+    // Write tags to file BEFORE touching the DB (file is source of truth)
+    if !skip_file_write {
+        write_tags_to_file(
+            &existing.file_path,
+            &title,
+            artist_name_str,
+            album_title_str,
+            year,
+            track_number,
+            disc_number,
+            track_total,
+            disc_total,
+            genre.as_deref(),
+            album_artist.as_deref(),
+            composer.as_deref(),
+            bpm,
+            comment.as_deref(),
+            lyrics.as_deref(),
+        )?;
+    }
 
     sqlx::query(
         "UPDATE tracks SET title = ?, track_number = ?, disc_number = ?, lyrics = ?, \
@@ -474,7 +610,7 @@ pub async fn update_track(
     track_id: i64,
     input: TrackUpdateInput,
 ) -> Result<TrackRow, AppError> {
-    update_track_inner(db.inner(), track_id, input).await
+    update_track_inner(db.inner(), track_id, input, false).await
 }
 
 // ── Batch Update ──
@@ -483,15 +619,23 @@ pub async fn batch_update_tracks_inner(
     db: &DbPool,
     track_ids: Vec<i64>,
     input: TrackUpdateInput,
+    skip_file_write: bool,
 ) -> Result<(), AppError> {
     let mut tx = db.begin().await?;
     for &id in &track_ids {
-        // Fetch existing track within transaction
-        let existing = sqlx::query_as::<_, Track>("SELECT * FROM tracks WHERE id = ?")
-            .bind(id)
-            .fetch_optional(&mut *tx)
-            .await?
-            .ok_or_else(|| AppError::NotFound(format!("Track {} not found", id)))?;
+        // Fetch existing track with joined names (needed for file write)
+        let existing = sqlx::query_as::<_, TrackRow>(
+            "SELECT t.*, a.name as artist_name, al.title as album_title, \
+             al.cover_path as album_cover_path \
+             FROM tracks t \
+             LEFT JOIN artists a ON t.artist_id = a.id \
+             LEFT JOIN albums al ON t.album_id = al.id \
+             WHERE t.id = ?",
+        )
+        .bind(id)
+        .fetch_optional(&mut *tx)
+        .await?
+        .ok_or_else(|| AppError::NotFound(format!("Track {} not found", id)))?;
 
         let now = Utc::now().to_rfc3339();
         let title = input.title.clone().unwrap_or(existing.title);
@@ -561,6 +705,39 @@ pub async fn batch_update_tracks_inner(
             }
         };
 
+        // Write tags to file (warn on failure — batch continues for remaining tracks)
+        if !skip_file_write {
+            let artist_name_str = match input.artist_name.as_deref() {
+                None => existing.artist_name.as_deref(),
+                Some("") => None,
+                Some(name) => Some(name),
+            };
+            let album_title_str = match input.album_title.as_deref() {
+                None => existing.album_title.as_deref(),
+                Some("") => None,
+                Some(t) => Some(t),
+            };
+            if let Err(e) = write_tags_to_file(
+                &existing.file_path,
+                &title,
+                artist_name_str,
+                album_title_str,
+                year,
+                track_number,
+                disc_number,
+                track_total,
+                disc_total,
+                genre.as_deref(),
+                album_artist.as_deref(),
+                composer.as_deref(),
+                bpm,
+                comment.as_deref(),
+                lyrics.as_deref(),
+            ) {
+                warn!("Failed to write tags to {:?}: {}", existing.file_path, e);
+            }
+        }
+
         sqlx::query(
             "UPDATE tracks SET title = ?, track_number = ?, disc_number = ?, lyrics = ?, \
              artist_id = ?, album_id = ?, \
@@ -601,7 +778,7 @@ pub async fn batch_update_tracks(
     track_ids: Vec<i64>,
     input: TrackUpdateInput,
 ) -> Result<(), AppError> {
-    batch_update_tracks_inner(db.inner(), track_ids, input).await
+    batch_update_tracks_inner(db.inner(), track_ids, input, false).await
 }
 
 // ── Extra Tag Commands ──
@@ -1378,7 +1555,7 @@ mod tests {
             title: Some("New Title".to_string()),
             track_number: Some(5),
             ..Default::default()
-        }).await.unwrap();
+        }, true).await.unwrap();
 
         assert_eq!(updated.title, "New Title");
         assert_eq!(updated.track_number, Some(5));
@@ -1412,7 +1589,7 @@ mod tests {
         let updated = update_track_inner(&db, track_id, TrackUpdateInput {
             artist_name: Some("New Artist".to_string()),
             ..Default::default()
-        }).await.unwrap();
+        }, true).await.unwrap();
 
         assert_eq!(updated.artist_name, Some("New Artist".to_string()));
 
@@ -1435,7 +1612,7 @@ mod tests {
         update_track_inner(&db, track_id, TrackUpdateInput {
             artist_name: Some("Existing Artist".to_string()),
             ..Default::default()
-        }).await.unwrap();
+        }, true).await.unwrap();
 
         // should NOT have created a second artist row
         let artists = list_artists_inner(&db).await.unwrap();
@@ -1462,7 +1639,7 @@ mod tests {
         let updated = update_track_inner(&db, track_id, TrackUpdateInput {
             artist_name: Some("".to_string()),
             ..Default::default()
-        }).await.unwrap();
+        }, true).await.unwrap();
 
         assert_eq!(updated.artist_id, None);
         assert_eq!(updated.artist_name, None);
@@ -1477,7 +1654,7 @@ mod tests {
         let updated = update_track_inner(&db, track_id, TrackUpdateInput {
             album_title: Some("New Album".to_string()),
             ..Default::default()
-        }).await.unwrap();
+        }, true).await.unwrap();
 
         assert_eq!(updated.album_title, Some("New Album".to_string()));
 
@@ -1496,7 +1673,7 @@ mod tests {
             artist_name: Some("Band".to_string()),
             album_title: Some("Debut".to_string()),
             ..Default::default()
-        }).await.unwrap();
+        }, true).await.unwrap();
 
         assert_eq!(updated.artist_name, Some("Band".to_string()));
         assert_eq!(updated.album_title, Some("Debut".to_string()));
@@ -1529,7 +1706,7 @@ mod tests {
         let updated = update_track_inner(&db, track_id, TrackUpdateInput {
             album_title: Some("".to_string()),
             ..Default::default()
-        }).await.unwrap();
+        }, true).await.unwrap();
 
         assert_eq!(updated.album_id, None);
         assert_eq!(updated.album_title, None);
@@ -2043,7 +2220,7 @@ mod tests {
             year: Some(2023),
             composer: Some("Bach".to_string()),
             ..Default::default()
-        }).await.unwrap();
+        }, true).await.unwrap();
 
         assert_eq!(updated.genre, Some("Jazz".to_string()));
         assert_eq!(updated.bpm, Some(120));
@@ -2062,13 +2239,13 @@ mod tests {
             genre: Some("Rock".to_string()),
             bpm: Some(140),
             ..Default::default()
-        }).await.unwrap();
+        }, true).await.unwrap();
 
         // Update only title — genre and bpm must be unchanged
         let updated = update_track_inner(&db, track_id, TrackUpdateInput {
             title: Some("New Title".to_string()),
             ..Default::default()
-        }).await.unwrap();
+        }, true).await.unwrap();
 
         assert_eq!(updated.title, "New Title");
         assert_eq!(updated.genre, Some("Rock".to_string()));
@@ -2086,7 +2263,7 @@ mod tests {
         batch_update_tracks_inner(&db, vec![id1, id2, id3], TrackUpdateInput {
             title: Some("Batch Title".to_string()),
             ..Default::default()
-        }).await.unwrap();
+        }, true).await.unwrap();
 
         for id in [id1, id2, id3] {
             let t = get_track_inner(&db, id).await.unwrap();
@@ -2109,6 +2286,7 @@ mod tests {
                 title: Some("Should Rollback".to_string()),
                 ..Default::default()
             },
+            true,
         ).await;
 
         assert!(result.is_err(), "batch with invalid id should fail");
@@ -2160,6 +2338,104 @@ mod tests {
         let fetched = get_track_extra_tags_inner(&db, track_id).await.unwrap();
         assert_eq!(fetched.len(), 1);
         assert_eq!(fetched[0].frame_id, "TCOP");
+    }
+
+    // ── File Write-back Tests ──
+
+    /// Create a minimal tagged MP3 file in `dir` with the given filename.
+    /// Returns the path to the created file.
+    fn make_tagged_mp3(dir: &std::path::Path, name: &str, title: &str, artist: &str, album: &str) -> std::path::PathBuf {
+        use lofty::tag::{TagType, Accessor};
+        use std::io::Write;
+
+        let path = dir.join(name);
+        {
+            let mut file = std::fs::File::create(&path).unwrap();
+            let mut frame = [0u8; 417];
+            frame[0] = 0xFF; frame[1] = 0xFB; frame[2] = 0x90; frame[3] = 0x64;
+            for _ in 0..3 { file.write_all(&frame).unwrap(); }
+        }
+        {
+            let mut tagged = lofty::read_from_path(&path).unwrap();
+            tagged.insert_tag(lofty::tag::Tag::new(TagType::Id3v2));
+            let tag = tagged.tag_mut(TagType::Id3v2).unwrap();
+            tag.set_title(title.to_string());
+            tag.set_artist(artist.to_string());
+            tag.set_album(album.to_string());
+            tagged.save_to_path(&path, WriteOptions::default()).unwrap();
+        }
+        path
+    }
+
+    #[tokio::test]
+    async fn test_update_track_writes_to_file() {
+        use lofty::prelude::*;
+
+        let db = setup_test_db().await;
+        let tmp = tempfile::tempdir().unwrap();
+
+        let mp3 = make_tagged_mp3(tmp.path(), "song.mp3", "Original Title", "Original Artist", "Original Album");
+        let col_path = tmp.path().to_string_lossy().replace('\\', "/");
+        let col = add_collection_inner(&db, CollectionInput { path: col_path, label: None }, true).await.unwrap();
+        scan_collection_inner(&db, col.id, None, |_| {}).await.unwrap();
+
+        let tracks = list_tracks_inner(&db).await.unwrap();
+        assert_eq!(tracks.len(), 1);
+        let track_id = tracks[0].id;
+
+        // Update via the command
+        update_track_inner(&db, track_id, TrackUpdateInput {
+            title: Some("New Title".into()),
+            artist_name: Some("New Artist".into()),
+            album_title: Some("New Album".into()),
+            year: Some(2024),
+            track_number: Some(3),
+            genre: Some("Jazz".into()),
+            lyrics: Some("la la la".into()),
+            ..Default::default()
+        }, false).await.unwrap();
+
+        // Re-read the file directly with Lofty — DB must not be the only thing changed
+        let tagged = lofty::read_from_path(&mp3).unwrap();
+        let tag = tagged.primary_tag().or_else(|| tagged.first_tag()).unwrap();
+        assert_eq!(tag.title().as_deref(), Some("New Title"));
+        assert_eq!(tag.artist().as_deref(), Some("New Artist"));
+        assert_eq!(tag.album().as_deref(), Some("New Album"));
+        assert_eq!(tag.year(), Some(2024));
+        assert_eq!(tag.track(), Some(3));
+        assert_eq!(tag.genre().as_deref(), Some("Jazz"));
+        assert_eq!(tag.get_string(&ItemKey::Lyrics).as_deref(), Some("la la la"));
+    }
+
+    #[tokio::test]
+    async fn test_batch_update_writes_to_file() {
+        use lofty::prelude::*;
+
+        let db = setup_test_db().await;
+        let tmp = tempfile::tempdir().unwrap();
+
+        let mp3a = make_tagged_mp3(tmp.path(), "a.mp3", "Track A", "Artist A", "Album A");
+        let mp3b = make_tagged_mp3(tmp.path(), "b.mp3", "Track B", "Artist B", "Album B");
+        let col_path = tmp.path().to_string_lossy().replace('\\', "/");
+        let col = add_collection_inner(&db, CollectionInput { path: col_path, label: None }, true).await.unwrap();
+        scan_collection_inner(&db, col.id, None, |_| {}).await.unwrap();
+
+        let tracks = list_tracks_inner(&db).await.unwrap();
+        assert_eq!(tracks.len(), 2);
+        let ids: Vec<i64> = tracks.iter().map(|t| t.id).collect();
+
+        // Apply the same genre to both tracks via batch update
+        batch_update_tracks_inner(&db, ids, TrackUpdateInput {
+            genre: Some("Electronic".into()),
+            ..Default::default()
+        }, false).await.unwrap();
+
+        // Both files should now have the new genre
+        for mp3 in [&mp3a, &mp3b] {
+            let tagged = lofty::read_from_path(mp3).unwrap();
+            let tag = tagged.primary_tag().or_else(|| tagged.first_tag()).unwrap();
+            assert_eq!(tag.genre().as_deref(), Some("Electronic"), "file {:?} not updated", mp3);
+        }
     }
 
     #[tokio::test]
