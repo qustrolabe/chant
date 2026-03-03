@@ -40,11 +40,11 @@ export function useCoverArt(
         if (res.status === "ok" && res.data) {
           const url = `data:${res.data.mimeType};base64,${res.data.data}`;
           coverCache.set(key, url);
-          return url;
+          return url as string | null;
         }
         coverCache.set(key, null);
-        return null;
-      });
+        return null as string | null;
+      }).catch((): string | null => null);
       pending.set(key, promise);
     }
 
@@ -91,11 +91,11 @@ export function useAlbumCoverArt(albumId: number): string | null {
         if (res.status === "ok" && res.data) {
           const url = `data:${res.data.mimeType};base64,${res.data.data}`;
           albumCoverCache.set(albumId, url);
-          return url;
+          return url as string | null;
         }
         albumCoverCache.set(albumId, null);
-        return null;
-      });
+        return null as string | null;
+      }).catch((): string | null => null);
       albumPending.set(albumId, promise);
     }
 
@@ -142,11 +142,11 @@ export function useArtistCoverArt(artistId: number): string | null {
         if (res.status === "ok" && res.data) {
           const url = `data:${res.data.mimeType};base64,${res.data.data}`;
           artistCoverCache.set(artistId, url);
-          return url;
+          return url as string | null;
         }
         artistCoverCache.set(artistId, null);
-        return null;
-      });
+        return null as string | null;
+      }).catch((): string | null => null);
       artistPending.set(artistId, promise);
     }
 

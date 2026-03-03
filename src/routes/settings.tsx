@@ -2,6 +2,7 @@ import { createFileRoute } from "@tanstack/react-router";
 import { useEffect, useState } from "react";
 import { commands } from "../bindings";
 import { open } from "@tauri-apps/plugin-dialog";
+import { listen } from "@tauri-apps/api/event";
 
 export const Route = createFileRoute("/settings")({
   component: Settings,
@@ -10,6 +11,7 @@ export const Route = createFileRoute("/settings")({
 function Settings() {
   const [musicDir, setMusicDir] = useState<string | null>(null);
   const [scanning, setScanning] = useState(false);
+  const [scannedCount, setScannedCount] = useState(0);
   const [confirmClear, setConfirmClear] = useState(false);
   const [clearing, setClearing] = useState(false);
 
@@ -39,8 +41,30 @@ function Settings() {
     }
   };
 
+  useEffect(() => {
+    let unlistens: Array<() => void> = [];
+    let mounted = true;
+
+    Promise.all([
+      listen<number>("scan:progress", (e) => setScannedCount(e.payload)),
+      listen<number>("scan:complete", () => setScannedCount(0)),
+    ]).then((fns) => {
+      if (mounted) {
+        unlistens = fns;
+      } else {
+        fns.forEach((fn) => fn());
+      }
+    });
+
+    return () => {
+      mounted = false;
+      unlistens.forEach((fn) => fn());
+    };
+  }, []);
+
   const handleScan = async () => {
     setScanning(true);
+    setScannedCount(0);
     const collections = await commands.listCollections();
     if (collections.status === "ok" && collections.data.length > 0) {
       await commands.scanCollection(collections.data[0].id);
@@ -102,7 +126,9 @@ function Settings() {
                   disabled={scanning}
                   className="px-6 py-2 bg-bg-surface hover:bg-bg-overlay disabled:opacity-50 rounded-lg text-xs font-bold uppercase tracking-widest transition-all text-fg-secondary"
                 >
-                  {scanning ? "Scanning..." : "Scan Now"}
+                  {scanning
+                    ? `Scanning… ${scannedCount} ${scannedCount === 1 ? "track" : "tracks"}`
+                    : "Scan Now"}
                 </button>
               </div>
             )}

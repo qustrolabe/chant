@@ -11,6 +11,7 @@
 import { Route as rootRouteImport } from './routes/__root'
 import { Route as TableRouteImport } from './routes/table'
 import { Route as SettingsRouteImport } from './routes/settings'
+import { Route as MetadataRouteImport } from './routes/metadata'
 import { Route as DebugRouteImport } from './routes/debug'
 import { Route as ArtistsRouteImport } from './routes/artists'
 import { Route as AlbumsRouteImport } from './routes/albums'
@@ -26,6 +27,11 @@ const TableRoute = TableRouteImport.update({
 const SettingsRoute = SettingsRouteImport.update({
   id: '/settings',
   path: '/settings',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const MetadataRoute = MetadataRouteImport.update({
+  id: '/metadata',
+  path: '/metadata',
   getParentRoute: () => rootRouteImport,
 } as any)
 const DebugRoute = DebugRouteImport.update({
@@ -64,6 +70,7 @@ export interface FileRoutesByFullPath {
   '/albums': typeof AlbumsRoute
   '/artists': typeof ArtistsRoute
   '/debug': typeof DebugRoute
+  '/metadata': typeof MetadataRoute
   '/settings': typeof SettingsRoute
   '/table': typeof TableRoute
   '/albums/$albumId': typeof AlbumsAlbumIdRoute
@@ -74,6 +81,7 @@ export interface FileRoutesByTo {
   '/albums': typeof AlbumsRoute
   '/artists': typeof ArtistsRoute
   '/debug': typeof DebugRoute
+  '/metadata': typeof MetadataRoute
   '/settings': typeof SettingsRoute
   '/table': typeof TableRoute
   '/albums/$albumId': typeof AlbumsAlbumIdRoute
@@ -85,6 +93,7 @@ export interface FileRoutesById {
   '/albums': typeof AlbumsRoute
   '/artists': typeof ArtistsRoute
   '/debug': typeof DebugRoute
+  '/metadata': typeof MetadataRoute
   '/settings': typeof SettingsRoute
   '/table': typeof TableRoute
   '/albums_/$albumId': typeof AlbumsAlbumIdRoute
@@ -97,6 +106,7 @@ export interface FileRouteTypes {
     | '/albums'
     | '/artists'
     | '/debug'
+    | '/metadata'
     | '/settings'
     | '/table'
     | '/albums/$albumId'
@@ -107,6 +117,7 @@ export interface FileRouteTypes {
     | '/albums'
     | '/artists'
     | '/debug'
+    | '/metadata'
     | '/settings'
     | '/table'
     | '/albums/$albumId'
@@ -117,6 +128,7 @@ export interface FileRouteTypes {
     | '/albums'
     | '/artists'
     | '/debug'
+    | '/metadata'
     | '/settings'
     | '/table'
     | '/albums_/$albumId'
@@ -128,6 +140,7 @@ export interface RootRouteChildren {
   AlbumsRoute: typeof AlbumsRoute
   ArtistsRoute: typeof ArtistsRoute
   DebugRoute: typeof DebugRoute
+  MetadataRoute: typeof MetadataRoute
   SettingsRoute: typeof SettingsRoute
   TableRoute: typeof TableRoute
   AlbumsAlbumIdRoute: typeof AlbumsAlbumIdRoute
@@ -148,6 +161,13 @@ declare module '@tanstack/react-router' {
       path: '/settings'
       fullPath: '/settings'
       preLoaderRoute: typeof SettingsRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/metadata': {
+      id: '/metadata'
+      path: '/metadata'
+      fullPath: '/metadata'
+      preLoaderRoute: typeof MetadataRouteImport
       parentRoute: typeof rootRouteImport
     }
     '/debug': {
@@ -200,6 +220,7 @@ const rootRouteChildren: RootRouteChildren = {
   AlbumsRoute: AlbumsRoute,
   ArtistsRoute: ArtistsRoute,
   DebugRoute: DebugRoute,
+  MetadataRoute: MetadataRoute,
   SettingsRoute: SettingsRoute,
   TableRoute: TableRoute,
   AlbumsAlbumIdRoute: AlbumsAlbumIdRoute,

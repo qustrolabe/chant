@@ -1,6 +1,8 @@
 import { createFileRoute } from "@tanstack/react-router";
 import { useEffect, useMemo, useRef, useState } from "react";
+import { useQuery } from "@tanstack/react-query";
 import { commands, TrackRow } from "../bindings";
+import { queryKeys } from "../lib/queryClient";
 import {
   createColumnHelper,
   flexRender,
@@ -37,7 +39,14 @@ function formatDuration(secs: number | null) {
 
 
 export function Table() {
-  const [tracks, setTracks] = useState<TrackRow[]>([]);
+  const { data: tracks = [] } = useQuery({
+    queryKey: queryKeys.tracks,
+    queryFn: async () => {
+      const res = await commands.listTracks();
+      if (res.status !== "ok") throw new Error("Failed to load tracks");
+      return res.data;
+    },
+  });
   const [sorting, setSorting] = useState<SortingState>([]);
   const [columnVisibility, setColumnVisibility] =
     useState<VisibilityState>(defaultColumnVisibility);
@@ -47,16 +56,6 @@ export function Table() {
   const columnMenuBtnRef = useRef<HTMLButtonElement>(null);
   const lastClickedIndexRef = useRef<number | null>(null);
   const contextMenu = useContextMenu<TrackRow>();
-
-  useEffect(() => {
-    async function loadTracks() {
-      const res = await commands.listTracks();
-      if (res.status === "ok") {
-        setTracks(res.data);
-      }
-    }
-    loadTracks();
-  }, []);
 
   // Close column menu on outside click
   useEffect(() => {

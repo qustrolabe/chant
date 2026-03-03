@@ -1,6 +1,8 @@
 import { createFileRoute, useNavigate } from "@tanstack/react-router";
 import { useEffect, useMemo, useRef, useState } from "react";
+import { useQuery } from "@tanstack/react-query";
 import { ArtistRow, commands } from "../bindings";
+import { queryKeys } from "../lib/queryClient";
 import { LuLayoutGrid, LuList, LuMicVocal } from "react-icons/lu";
 import { useArtistCoverArt } from "../hooks/useCoverArt";
 import { ContextMenu, useContextMenu } from "../components/ContextMenu";
@@ -21,7 +23,14 @@ export const Route = createFileRoute("/artists")({
 const columnHelper = createColumnHelper<ArtistRow>();
 
 function Artists() {
-  const [artists, setArtists] = useState<ArtistRow[]>([]);
+  const { data: artists = [] } = useQuery({
+    queryKey: queryKeys.artists,
+    queryFn: async () => {
+      const res = await commands.listArtistRows();
+      if (res.status !== "ok") throw new Error("Failed to load artists");
+      return res.data;
+    },
+  });
   const [sorting, setSorting] = useState<SortingState>([]);
   const [columnVisibility, setColumnVisibility] = useState<VisibilityState>({});
   const [showColumnMenu, setShowColumnMenu] = useState(false);
@@ -34,16 +43,6 @@ function Artists() {
   );
   const navigate = useNavigate();
   const contextMenu = useContextMenu<ArtistRow>();
-
-  useEffect(() => {
-    async function load() {
-      const res = await commands.listArtistRows();
-      if (res.status === "ok") {
-        setArtists(res.data);
-      }
-    }
-    load();
-  }, []);
 
   useEffect(() => {
     if (!showColumnMenu) return;

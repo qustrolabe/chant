@@ -101,7 +101,7 @@ export function CommandPalette({
                 Albums
               </CommandItem>
               <CommandItem
-                onSelect={() => run(() => navigate({ to: "/tracks" }))}
+                onSelect={() => run(() => navigate({ to: "/table" }))}
                 className="flex items-center gap-3 px-3 py-2 rounded-lg text-sm text-fg-secondary hover:bg-bg-overlay hover:text-fg-primary cursor-pointer transition-colors"
                 value="songs tracks search"
               >

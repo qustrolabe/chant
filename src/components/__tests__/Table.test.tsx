@@ -75,9 +75,17 @@ const tracks: TrackRow[] = [
 
 async function renderTable() {
   mockInvoke({ list_tracks: tracks });
-  // Dynamic import so vi.mock() calls above are hoisted before the module loads
-  const { Table } = await import("../../routes/table");
-  render(<Table />);
+  // Dynamic imports so vi.mock() calls above are hoisted and modules share the same instance
+  const [{ Table }, { QueryClient, QueryClientProvider }] = await Promise.all([
+    import("../../routes/table"),
+    import("@tanstack/react-query"),
+  ]);
+  const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+  render(
+    <QueryClientProvider client={client}>
+      <Table />
+    </QueryClientProvider>
+  );
   await waitFor(() => screen.getByText("Track One"));
 }
 

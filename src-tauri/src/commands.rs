@@ -9,7 +9,7 @@ use lofty::probe::Probe;
 use log::{error, info, warn};
 use sqlx::{Column, Row};
 use std::path::{Path, PathBuf};
-use tauri::{Manager, State};
+use tauri::{Emitter, Manager, State};
 use walkdir::WalkDir;
 
 // ── Collection Commands ──
@@ -686,7 +686,7 @@ pub async fn list_artist_rows_inner(db: &DbPool) -> Result<Vec<ArtistRow>, AppEr
         "SELECT a.id, a.name, a.sort_name,
                 (SELECT COUNT(*) FROM albums al WHERE al.artist_id = a.id) as album_count,
                 (SELECT COUNT(*) FROM tracks t WHERE t.artist_id = a.id) as track_count,
-                (SELECT COALESCE(SUM(t.duration_secs), 0) FROM tracks t WHERE t.artist_id = a.id) as total_duration_secs
+                (SELECT COALESCE(SUM(t.duration_secs), 0.0) FROM tracks t WHERE t.artist_id = a.id) as total_duration_secs
          FROM artists a
          ORDER BY a.name ASC",
     )
@@ -737,7 +737,7 @@ pub async fn list_album_rows_inner(db: &DbPool) -> Result<Vec<AlbumRow>, AppErro
     Ok(sqlx::query_as::<_, AlbumRow>(
         "SELECT al.id, al.title, ar.name as artist_name, al.year, al.genre,
                 COUNT(t.id) as track_count,
-                COALESCE(SUM(t.duration_secs), 0) as total_duration_secs,
+                COALESCE(SUM(t.duration_secs), 0.0) as total_duration_secs,
                 COALESCE(SUM(t.file_size_bytes), 0) as total_size_bytes
          FROM albums al
          LEFT JOIN artists ar ON al.artist_id = ar.id
@@ -787,7 +787,8 @@ pub async fn scan_collection_inner(
     db: &DbPool,
     collection_id: i64,
     covers_dir: Option<&Path>,
-) -> Result<(), AppError> {
+    on_progress: impl Fn(u32),
+) -> Result<u32, AppError> {
     let collection = sqlx::query_as::<_, Collection>(
         "SELECT * FROM collections WHERE id = ?",
     )
@@ -809,26 +810,40 @@ pub async fn scan_collection_inner(
 
     info!("Starting scan of collection: {:?}", root_path);
 
-    for entry in WalkDir::new(&root_path)
-        .into_iter()
-        .filter_map(|e| e.ok())
-        .filter(|e| e.file_type().is_file())
-    {
-        let path = entry.path();
+    let audio_extensions = ["mp3", "m4a", "flac", "wav", "ogg", "opus", "wma"];
+    let mut scanned: u32 = 0;
+
+    for entry in WalkDir::new(&root_path).follow_links(true) {
+        let entry = match entry {
+            Ok(e) => e,
+            Err(e) => {
+                warn!("Scan: skipping inaccessible path: {}", e);
+                continue;
+            }
+        };
+
+        if !entry.file_type().is_file() {
+            continue;
+        }
+
+        let path = entry.into_path();
         let ext = path.extension().and_then(|s| s.to_str()).unwrap_or("").to_lowercase();
 
-        let audio_extensions = ["mp3", "m4a", "flac", "wav", "ogg", "opus", "wma"];
         if !audio_extensions.contains(&ext.as_str()) {
             continue;
         }
 
-        if let Err(e) = process_track(db, collection_id, path, covers_dir).await {
-            error!("Error processing track {:?}: {:?}", path, e);
+        match process_track(db, collection_id, &path, covers_dir).await {
+            Ok(_) => {
+                scanned += 1;
+                on_progress(scanned);
+            }
+            Err(e) => error!("Error processing track {:?}: {:?}", path, e),
         }
     }
 
-    info!("Scan of collection {:?} complete", root_path);
-    Ok(())
+    info!("Scan of collection {:?} complete: {} tracks", root_path, scanned);
+    Ok(scanned)
 }
 
 #[tauri::command]
@@ -837,13 +852,19 @@ pub async fn scan_collection(
     app_handle: tauri::AppHandle,
     db: State<'_, DbPool>,
     collection_id: i64,
-) -> Result<(), AppError> {
+) -> Result<u32, AppError> {
     let covers_dir = app_handle
         .path()
         .app_data_dir()
         .map_err(|e| AppError::Io(format!("Failed to get app data dir: {}", e)))?
         .join("covers");
-    scan_collection_inner(db.inner(), collection_id, Some(&covers_dir)).await
+    let handle = app_handle.clone();
+    let total = scan_collection_inner(db.inner(), collection_id, Some(&covers_dir), move |n| {
+        let _ = handle.emit("scan:progress", n);
+    })
+    .await?;
+    let _ = app_handle.emit("scan:complete", total);
+    Ok(total)
 }
 
 async fn process_track(
@@ -1113,33 +1134,38 @@ pub async fn get_album_cover_art_inner(
     db: &DbPool,
     album_id: i64,
 ) -> Result<Option<CoverArt>, AppError> {
-    // Find the first track in this album to read its embedded art
-    let row: Option<(i64,)> =
-        sqlx::query_as("SELECT id FROM tracks WHERE album_id = ? LIMIT 1")
+    // Try up to 5 tracks — skip ones with unreadable files or no embedded art
+    let rows: Vec<(i64,)> =
+        sqlx::query_as("SELECT id FROM tracks WHERE album_id = ? LIMIT 5")
             .bind(album_id)
-            .fetch_optional(db)
+            .fetch_all(db)
             .await?;
 
-    match row {
-        Some((track_id,)) => get_cover_art_inner(db, track_id).await,
-        None => Ok(None),
+    for (track_id,) in rows {
+        if let Ok(Some(art)) = get_cover_art_inner(db, track_id).await {
+            return Ok(Some(art));
+        }
     }
+    Ok(None)
 }
 
 pub async fn get_artist_cover_art_inner(
     db: &DbPool,
     artist_id: i64,
 ) -> Result<Option<CoverArt>, AppError> {
-    let row: Option<(i64,)> =
-        sqlx::query_as("SELECT id FROM tracks WHERE artist_id = ? LIMIT 1")
+    // Try up to 5 tracks — skip ones with unreadable files or no embedded art
+    let rows: Vec<(i64,)> =
+        sqlx::query_as("SELECT id FROM tracks WHERE artist_id = ? LIMIT 5")
             .bind(artist_id)
-            .fetch_optional(db)
+            .fetch_all(db)
             .await?;
 
-    match row {
-        Some((track_id,)) => get_cover_art_inner(db, track_id).await,
-        None => Ok(None),
+    for (track_id,) in rows {
+        if let Ok(Some(art)) = get_cover_art_inner(db, track_id).await {
+            return Ok(Some(art));
+        }
     }
+    Ok(None)
 }
 
 #[tauri::command]
@@ -1894,7 +1920,7 @@ mod tests {
         let covers_dir = tmp_dir.path().join("covers");
 
         // Run scan with covers_dir
-        scan_collection_inner(&db, col.id, Some(&covers_dir)).await.unwrap();
+        scan_collection_inner(&db, col.id, Some(&covers_dir), |_| {}).await.unwrap();
 
         // Verify results
         let tracks = list_tracks_inner(&db).await.unwrap();

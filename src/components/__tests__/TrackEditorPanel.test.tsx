@@ -1,9 +1,15 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import { render, screen, fireEvent, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
+import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { TrackEditorPanel, ArtistTagInput, AlbumAutocomplete } from "../TrackEditorPanel";
 import { mockInvoke } from "../../test/mocks";
 import type { TrackRow, Artist, Album } from "../../bindings";
+
+function renderWithClient(ui: React.ReactElement) {
+  const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+  return render(<QueryClientProvider client={client}>{ui}</QueryClientProvider>);
+}
 
 // ── Fixtures ────────────────────────────────────────────────────────────────
 
@@ -77,34 +83,34 @@ describe("TrackEditorPanel", () => {
 
   it("shows loading state initially", async () => {
     setupMocks();
-    render(<TrackEditorPanel trackIds={[1]} />);
+    renderWithClient(<TrackEditorPanel trackIds={[1]} />);
     expect(screen.getByText("Loading…")).toBeInTheDocument();
   });
 
   it("renders track title after loading", async () => {
     setupMocks();
-    render(<TrackEditorPanel trackIds={[1]} />);
+    renderWithClient(<TrackEditorPanel trackIds={[1]} />);
     await waitForLoaded();
     expect(screen.getAllByText("My Song").length).toBeGreaterThan(0);
   });
 
   it("shows artist and album in header subtitle", async () => {
     setupMocks();
-    render(<TrackEditorPanel trackIds={[1]} />);
+    renderWithClient(<TrackEditorPanel trackIds={[1]} />);
     await waitForLoaded();
     expect(screen.getByText("Test Artist · Test Album")).toBeInTheDocument();
   });
 
   it("Save button is disabled when nothing is changed", async () => {
     setupMocks();
-    render(<TrackEditorPanel trackIds={[1]} />);
+    renderWithClient(<TrackEditorPanel trackIds={[1]} />);
     await waitForLoaded();
     expect(screen.getByRole("button", { name: /^save$/i })).toBeDisabled();
   });
 
   it("Discard button is disabled when nothing is changed", async () => {
     setupMocks();
-    render(<TrackEditorPanel trackIds={[1]} />);
+    renderWithClient(<TrackEditorPanel trackIds={[1]} />);
     await waitForLoaded();
     expect(screen.getByRole("button", { name: /discard/i })).toBeDisabled();
   });
@@ -112,7 +118,7 @@ describe("TrackEditorPanel", () => {
   it("Save button enables when title is edited", async () => {
     setupMocks();
     const user = userEvent.setup();
-    render(<TrackEditorPanel trackIds={[1]} />);
+    renderWithClient(<TrackEditorPanel trackIds={[1]} />);
     await waitForLoaded();
 
     const titleInputs = screen.getAllByDisplayValue("My Song");
@@ -125,7 +131,7 @@ describe("TrackEditorPanel", () => {
   it("Discard button enables when title is edited", async () => {
     setupMocks();
     const user = userEvent.setup();
-    render(<TrackEditorPanel trackIds={[1]} />);
+    renderWithClient(<TrackEditorPanel trackIds={[1]} />);
     await waitForLoaded();
 
     const titleInputs = screen.getAllByDisplayValue("My Song");
@@ -140,7 +146,7 @@ describe("TrackEditorPanel", () => {
     const mockedInvoke = vi.mocked(invoke);
     setupMocks();
     const user = userEvent.setup();
-    render(<TrackEditorPanel trackIds={[1]} />);
+    renderWithClient(<TrackEditorPanel trackIds={[1]} />);
     await waitForLoaded();
 
     // Use fireEvent.change to avoid stale-ref issues from inner-component FieldRow remounting
@@ -163,7 +169,7 @@ describe("TrackEditorPanel", () => {
 
   it("shows read-only fields: Duration, Format, Bitrate, Path", async () => {
     setupMocks();
-    render(<TrackEditorPanel trackIds={[1]} />);
+    renderWithClient(<TrackEditorPanel trackIds={[1]} />);
     await waitForLoaded();
     expect(screen.getByText("Duration")).toBeInTheDocument();
     expect(screen.getByText("3:33")).toBeInTheDocument();
@@ -181,14 +187,14 @@ describe("TrackEditorPanel", () => {
       list_albums: albums,
       get_track_extra_tags: [],
     });
-    render(<TrackEditorPanel trackIds={[999]} />);
+    renderWithClient(<TrackEditorPanel trackIds={[999]} />);
     await waitFor(() => expect(screen.getByText("Track not found.")).toBeInTheDocument());
   });
 
   it("calls onBack when back button is clicked", async () => {
     setupMocks();
     const onBack = vi.fn();
-    render(<TrackEditorPanel trackIds={[1]} onBack={onBack} />);
+    renderWithClient(<TrackEditorPanel trackIds={[1]} onBack={onBack} />);
     await waitForLoaded();
     fireEvent.click(screen.getByRole("button", { name: "Back" }));
     expect(onBack).toHaveBeenCalledOnce();
@@ -196,14 +202,14 @@ describe("TrackEditorPanel", () => {
 
   it("artist names are shown as chips", async () => {
     setupMocks();
-    render(<TrackEditorPanel trackIds={[1]} />);
+    renderWithClient(<TrackEditorPanel trackIds={[1]} />);
     await waitForLoaded();
     expect(screen.getAllByText("Test Artist").length).toBeGreaterThan(0);
   });
 
   it("multi-artist names are split and shown as separate chips", async () => {
     setupMocks({ ...baseTrack, artistName: "Alice / Bob" });
-    render(<TrackEditorPanel trackIds={[1]} />);
+    renderWithClient(<TrackEditorPanel trackIds={[1]} />);
     await waitForLoaded();
     expect(screen.getByText("Alice")).toBeInTheDocument();
     expect(screen.getByText("Bob")).toBeInTheDocument();
@@ -211,7 +217,7 @@ describe("TrackEditorPanel", () => {
 
   it("album field shows current album value", async () => {
     setupMocks();
-    render(<TrackEditorPanel trackIds={[1]} />);
+    renderWithClient(<TrackEditorPanel trackIds={[1]} />);
     await waitForLoaded();
     expect(screen.getByDisplayValue("Test Album")).toBeInTheDocument();
   });
@@ -219,7 +225,7 @@ describe("TrackEditorPanel", () => {
   it("dirty state clears after discarding changes", async () => {
     setupMocks();
     const user = userEvent.setup();
-    render(<TrackEditorPanel trackIds={[1]} />);
+    renderWithClient(<TrackEditorPanel trackIds={[1]} />);
     await waitForLoaded();
 
     const titleInputs = screen.getAllByDisplayValue("My Song");
@@ -246,7 +252,7 @@ describe("TrackEditorPanel", () => {
         get_track_extra_tags: [],
         batch_update_tracks: null,
       });
-      render(<TrackEditorPanel trackIds={[1, 2]} />);
+      renderWithClient(<TrackEditorPanel trackIds={[1, 2]} />);
       await waitForLoaded();
       // Input should have the common value
       expect(screen.getByDisplayValue("Same Title")).toBeInTheDocument();
@@ -262,7 +268,7 @@ describe("TrackEditorPanel", () => {
         get_track_extra_tags: [],
         batch_update_tracks: null,
       });
-      render(<TrackEditorPanel trackIds={[1, 2]} />);
+      renderWithClient(<TrackEditorPanel trackIds={[1, 2]} />);
       await waitForLoaded();
       expect(screen.getByPlaceholderText("(varies)")).toBeInTheDocument();
     });
@@ -278,7 +284,7 @@ describe("TrackEditorPanel", () => {
         batch_update_tracks: null,
       });
       const user = userEvent.setup();
-      render(<TrackEditorPanel trackIds={[1, 2]} />);
+      renderWithClient(<TrackEditorPanel trackIds={[1, 2]} />);
       await waitForLoaded();
 
       const titleInput = screen.getByPlaceholderText("(varies)");
@@ -301,7 +307,7 @@ describe("TrackEditorPanel", () => {
         batch_update_tracks: null,
       });
       const user = userEvent.setup();
-      render(<TrackEditorPanel trackIds={[1, 2]} />);
+      renderWithClient(<TrackEditorPanel trackIds={[1, 2]} />);
       await waitForLoaded();
 
       const titleInput = screen.getByPlaceholderText("(varies)");
@@ -331,7 +337,7 @@ describe("TrackEditorPanel", () => {
         batch_update_tracks: null,
       });
       const user = userEvent.setup();
-      render(<TrackEditorPanel trackIds={[1, 2]} />);
+      renderWithClient(<TrackEditorPanel trackIds={[1, 2]} />);
       await waitForLoaded();
 
       // Only edit title — use fireEvent to avoid stale-ref from FieldRow remounting
@@ -348,9 +354,9 @@ describe("TrackEditorPanel", () => {
           }),
         ),
       );
-      // composer should not be in input (not edited)
+      // composer is null (not edited — null = "keep existing" on Rust side)
       const call = mockedInvoke.mock.calls.find((c) => c[0] === "batch_update_tracks");
-      expect(call?.[1]).not.toHaveProperty("input.composer");
+      expect(call?.[1]).toHaveProperty("input.composer", null);
     });
   });
 
@@ -359,7 +365,7 @@ describe("TrackEditorPanel", () => {
   describe("validation", () => {
     it("invalid BPM shows red ring and disables Save", async () => {
       setupMocks();
-      render(<TrackEditorPanel trackIds={[1]} />);
+      renderWithClient(<TrackEditorPanel trackIds={[1]} />);
       await waitForLoaded();
 
       const bpmRow = screen.getByText("BPM").closest("tr")!;
@@ -374,7 +380,7 @@ describe("TrackEditorPanel", () => {
 
     it("valid BPM clears error and enables Save after title edit", async () => {
       setupMocks();
-      render(<TrackEditorPanel trackIds={[1]} />);
+      renderWithClient(<TrackEditorPanel trackIds={[1]} />);
       await waitForLoaded();
 
       const bpmInput = () => screen.getByText("BPM").closest("tr")!.querySelector("input")!;
@@ -412,7 +418,7 @@ describe("TrackEditorPanel", () => {
         set_track_extra_tags: null,
         batch_update_tracks: null,
       });
-      render(<TrackEditorPanel trackIds={[1]} />);
+      renderWithClient(<TrackEditorPanel trackIds={[1]} />);
       await waitForLoaded();
       expect(screen.getByDisplayValue("Am")).toBeInTheDocument();
       expect(screen.getByDisplayValue("2024 Label")).toBeInTheDocument();
@@ -420,7 +426,7 @@ describe("TrackEditorPanel", () => {
 
     it("shows Add field button in single-track mode", async () => {
       setupMocks();
-      render(<TrackEditorPanel trackIds={[1]} />);
+      renderWithClient(<TrackEditorPanel trackIds={[1]} />);
       await waitForLoaded();
       expect(screen.getByText("Add field")).toBeInTheDocument();
     });
@@ -435,7 +441,7 @@ describe("TrackEditorPanel", () => {
         get_track_extra_tags: [],
         batch_update_tracks: null,
       });
-      render(<TrackEditorPanel trackIds={[1, 2]} />);
+      renderWithClient(<TrackEditorPanel trackIds={[1, 2]} />);
       await waitForLoaded();
       expect(screen.queryByText("Add field")).not.toBeInTheDocument();
     });

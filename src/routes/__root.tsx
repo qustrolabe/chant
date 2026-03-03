@@ -11,6 +11,7 @@ import {
   LuTable,
   LuSettings,
   LuWrench,
+  LuSearch,
 } from "react-icons/lu";
 
 function RootLayout() {
@@ -90,6 +91,7 @@ function RootLayout() {
                 <NavItem icon={<LuMicVocal />} label="Artists" to="/artists" />
                 <NavItem icon={<LuDisc3 />} label="Albums" to="/albums" />
                 <NavItem icon={<LuTable />} label="Table" to="/table" />
+                <NavItem icon={<LuSearch />} label="Metadata" to="/metadata" />
               </nav>
 
               <div className="mt-4 p-4 pb-2 text-[10px] font-semibold uppercase tracking-[0.2em] text-fg-muted">

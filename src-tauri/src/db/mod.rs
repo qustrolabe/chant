@@ -80,7 +80,7 @@ pub async fn init_db(app_handle: &tauri::AppHandle) -> Result<DbPool, sqlx::Erro
     ] {
         if let Err(e) = sqlx::query(stmt).execute(&pool).await {
             let msg = e.to_string();
-            if !msg.contains("already has a column named") {
+            if !msg.contains("already has a column named") && !msg.contains("duplicate column name") {
                 return Err(e);
             }
         }

@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState } from "react";
+import { useQueryClient } from "@tanstack/react-query";
 import {
   commands,
   Artist,
@@ -10,6 +11,7 @@ import {
 import { LuArrowLeft, LuX, LuPlus } from "react-icons/lu";
 import { LangPicker } from "./LangPicker";
 import { FIELD_VALIDATORS } from "../lib/validators";
+import { queryKeys } from "../lib/queryClient";
 
 // ── Formatters ───────────────────────────────────────────────────────────────
 
@@ -381,6 +383,7 @@ export function TrackEditorPanel({
   trackIds: number[];
   onBack?: () => void;
 }) {
+  const queryClient = useQueryClient();
   const [tracks, setTracks] = useState<TrackRow[]>([]);
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
@@ -426,12 +429,6 @@ export function TrackEditorPanel({
     load();
   }, [trackIds.join(",")]);
 
-  function getEdited<T>(field: keyof EditState): T | null {
-    if (!editState) return null;
-    const fs = editState[field] as FieldState<T>;
-    return fs.kind === "edited" ? fs.value : null;
-  }
-
   function setField<T>(field: keyof EditState, value: T) {
     setEditState((prev) => {
       if (!prev) return prev;
@@ -464,10 +461,10 @@ export function TrackEditorPanel({
     // Extra tag validators
     const eteErrs: Record<string, string> = {};
     for (const tag of extraTags) {
-      const validator = FIELD_VALIDATORS[tag.frame_id];
+      const validator = FIELD_VALIDATORS[tag.frameId];
       if (validator && tag.value) {
         const e = validator(tag.value);
-        if (e) eteErrs[tag.frame_id] = e;
+        if (e) eteErrs[tag.frameId] = e;
       }
     }
     setErrors(errs);
@@ -494,8 +491,13 @@ export function TrackEditorPanel({
 
     setSaving(true);
 
-    // Build the input — only include edited fields
-    const input: TrackUpdateInput = {};
+    // Build the input — null means "keep existing" on the Rust side
+    const input: TrackUpdateInput = {
+      title: null, trackNumber: null, discNumber: null, lyrics: null,
+      artistName: null, albumTitle: null, genre: null, albumArtist: null,
+      composer: null, bpm: null, comment: null, commentLang: null,
+      year: null, lyricsLang: null, trackTotal: null, discTotal: null,
+    };
 
     const es = editState;
     if (es.title.kind === "edited") input.title = es.title.value || null;
@@ -538,6 +540,8 @@ export function TrackEditorPanel({
           setEditState(buildEditState([updated]));
           // Save extra tags
           await commands.setTrackExtraTags(trackIds[0], extraTags);
+          queryClient.invalidateQueries({ queryKey: queryKeys.tracks });
+          queryClient.invalidateQueries({ queryKey: queryKeys.artists });
         }
       } else {
         await commands.batchUpdateTracks(trackIds, input);
@@ -548,6 +552,8 @@ export function TrackEditorPanel({
           .map((r) => (r as { status: "ok"; data: TrackRow }).data);
         setTracks(reloaded);
         setEditState(buildEditState(reloaded));
+        queryClient.invalidateQueries({ queryKey: queryKeys.tracks });
+        queryClient.invalidateQueries({ queryKey: queryKeys.artists });
       }
       setSaved(true);
       setTimeout(() => setSaved(false), 1500);
@@ -571,9 +577,6 @@ export function TrackEditorPanel({
   }
 
   const firstTrack = tracks[0];
-
-  const divState: FieldState<unknown> =
-    editState.title.kind === "divergent" ? editState.title : { kind: "uniform", value: null };
 
   const headerLabel = isSingle
     ? firstTrack.title
@@ -935,13 +938,13 @@ export function TrackEditorPanel({
               <>
                 <SectionHeader label="Extra Tags" />
                 {extraTags.map((tag) => {
-                  const label = ADDABLE_FRAMES.find((f) => f.id === tag.frame_id)?.label ?? tag.frame_id;
-                  const err = extraTagErrors[tag.frame_id];
+                  const label = ADDABLE_FRAMES.find((f) => f.id === tag.frameId)?.label ?? tag.frameId;
+                  const err = extraTagErrors[tag.frameId];
                   const fs: FieldState<string> = { kind: "edited", value: tag.value };
                   return (
-                    <tr key={tag.frame_id} className={`border-b border-white/5 ${rowCls(fs, err)}`}>
+                    <tr key={tag.frameId} className={`border-b border-white/5 ${rowCls(fs, err)}`}>
                       <td className="px-2 py-1 text-fg-muted">{label}</td>
-                      <td className="px-2 py-1 text-fg-secondary text-[10px]">{tag.frame_id}</td>
+                      <td className="px-2 py-1 text-fg-secondary text-[10px]">{tag.frameId}</td>
                       <td className="px-1 py-0.5">
                         <div className="flex items-center gap-1">
                           <input
@@ -950,14 +953,14 @@ export function TrackEditorPanel({
                             onChange={(e) => {
                               const val = e.target.value;
                               setExtraTags((prev) =>
-                                prev.map((t) => t.frame_id === tag.frame_id ? { ...t, value: val } : t)
+                                prev.map((t) => t.frameId === tag.frameId ? { ...t, value: val } : t)
                               );
-                              const validator = FIELD_VALIDATORS[tag.frame_id];
+                              const validator = FIELD_VALIDATORS[tag.frameId];
                               if (validator && val) {
                                 const verr = validator(val);
-                                setExtraTagErrors((prev) => ({ ...prev, [tag.frame_id]: verr ?? "" }));
+                                setExtraTagErrors((prev) => ({ ...prev, [tag.frameId]: verr ?? "" }));
                               } else {
-                                setExtraTagErrors((prev) => { const next = { ...prev }; delete next[tag.frame_id]; return next; });
+                                setExtraTagErrors((prev) => { const next = { ...prev }; delete next[tag.frameId]; return next; });
                               }
                             }}
                           />
@@ -966,8 +969,8 @@ export function TrackEditorPanel({
                             className="text-fg-muted hover:text-danger transition-colors flex-shrink-0"
                             aria-label={`Remove ${label}`}
                             onClick={() => {
-                              setExtraTags((prev) => prev.filter((t) => t.frame_id !== tag.frame_id));
-                              setExtraTagErrors((prev) => { const next = { ...prev }; delete next[tag.frame_id]; return next; });
+                              setExtraTags((prev) => prev.filter((t) => t.frameId !== tag.frameId));
+                              setExtraTagErrors((prev) => { const next = { ...prev }; delete next[tag.frameId]; return next; });
                             }}
                           >
                             <LuX size={11} />
@@ -989,7 +992,7 @@ export function TrackEditorPanel({
                         onChange={(e) => {
                           const id = e.target.value;
                           if (!id) return;
-                          setExtraTags((prev) => [...prev, { frame_id: id, value: "" }]);
+                          setExtraTags((prev) => [...prev, { frameId: id, value: "" }]);
                           setShowAddFrame(false);
                         }}
                         onBlur={() => setShowAddFrame(false)}
@@ -997,7 +1000,7 @@ export function TrackEditorPanel({
                       >
                         <option value="" disabled>Select frame…</option>
                         {ADDABLE_FRAMES.filter(
-                          (f) => !extraTags.some((t) => t.frame_id === f.id)
+                          (f) => !extraTags.some((t) => t.frameId === f.id)
                         ).map((f) => (
                           <option key={f.id} value={f.id}>
                             {f.label} ({f.id})

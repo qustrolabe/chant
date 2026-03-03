@@ -175,7 +175,7 @@ async listTracksByAlbum(albumId: number) : Promise<Result<TrackRow[], AppError>>
     else return { status: "error", error: e  as any };
 }
 },
-async scanCollection(collectionId: number) : Promise<Result<null, AppError>> {
+async scanCollection(collectionId: number) : Promise<Result<number, AppError>> {
     try {
     return { status: "ok", data: await TAURI_INVOKE("scan_collection", { collectionId }) };
 } catch (e) {

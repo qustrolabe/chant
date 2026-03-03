@@ -18,7 +18,7 @@ function Debug() {
       setLoading(true);
       const res = await commands.debugQueryTable(selectedTable);
       if (res.status === "ok") {
-        setRows(res.data);
+        setRows(res.data as Record<string, string>[]);
       }
       setLoading(false);
     }
