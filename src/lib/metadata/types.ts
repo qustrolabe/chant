@@ -12,6 +12,8 @@ export interface MetadataResult {
   album?: string;
   year?: number;
   coverUrl?: string;
+  lyrics?: string;
+  syncedLyrics?: string;
   raw: unknown;
 }
 

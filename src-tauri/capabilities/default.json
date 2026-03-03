@@ -32,7 +32,8 @@
         { "url": "http://localhost:11434/*" },
         { "url": "https://itunes.apple.com/*" },
         { "url": "https://musicbrainz.org/*" },
-        { "url": "https://coverartarchive.org/*" }
+        { "url": "https://coverartarchive.org/*" },
+        { "url": "https://lrclib.net/*" }
       ],
       "deny": []
     }
