@@ -19,7 +19,12 @@ import { TrackEditorPanel } from "../components/TrackEditorPanel";
 import { revealItemInDir } from "@tauri-apps/plugin-opener";
 
 export const Route = createFileRoute("/table")({
-  validateSearch: (search: Record<string, unknown>) => ({
+  validateSearch: (search: Record<string, unknown>): {
+    albumId?: number;
+    albumName?: string;
+    artistId?: number;
+    artistName?: string;
+  } => ({
     albumId: typeof search.albumId === "number" ? search.albumId : undefined,
     albumName: typeof search.albumName === "string" ? search.albumName : undefined,
     artistId: typeof search.artistId === "number" ? search.artistId : undefined,
